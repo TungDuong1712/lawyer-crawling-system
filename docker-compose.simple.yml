@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=1
+      - DB_NAME=lawyers_db
+      - DB_USER=crawler
+      - DB_PASSWORD=password
+      - DB_HOST=db
+      - DB_PORT=5432
+    depends_on:
+      - db
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+    networks:
+      - crawler-network
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=lawyers_db
+      - POSTGRES_USER=crawler
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - crawler-network
+
+volumes:
+  postgres_data:
+
+networks:
+  crawler-network:
+    driver: bridge
