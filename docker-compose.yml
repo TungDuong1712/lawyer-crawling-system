@@ -4,7 +4,8 @@ services:
   web:
     build: .
     ports:
-      - "8000:8000"
+      - "8001:8001"
+    command: gunicorn --bind 0.0.0.0:8001 lawyers_project.wsgi:application
     environment:
       - DEBUG=1
       - DATABASE_URL=postgresql://crawler:password@db:5432/lawyers_db

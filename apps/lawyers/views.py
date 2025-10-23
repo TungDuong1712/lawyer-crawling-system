@@ -5,8 +5,8 @@ from rest_framework import generics, filters
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Lawyer, LawyerReview, LawyerContact
-from .serializers import LawyerSerializer, LawyerReviewSerializer, LawyerContactSerializer
+from .models import Lawyer
+from .serializers import LawyerSerializer
 from .filters import LawyerFilter
 import csv
 import json

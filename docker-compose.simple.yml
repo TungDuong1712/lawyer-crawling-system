@@ -2,22 +2,23 @@ version: '3.8'
 
 services:
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile.simple
+    build: .
     ports:
-      - "8000:8000"
+      - "8001:8001"
+    command: python manage.py runserver 0.0.0.0:8001
     environment:
       - DEBUG=1
-      - DB_NAME=lawyers_db
-      - DB_USER=crawler
-      - DB_PASSWORD=password
-      - DB_HOST=db
-      - DB_PORT=5432
+      - DATABASE_URL=postgresql://crawler:password@db:5432/lawyers_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
       - db
+      - redis
     volumes:
       - ./:/app
+      - ./static:/app/static
+      - ./media:/app/media
     restart: unless-stopped
     networks:
       - crawler-network
@@ -36,8 +37,55 @@ services:
     networks:
       - crawler-network
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - crawler-network
+
+  celery:
+    build: .
+    command: celery -A lawyers_project worker -l info
+    environment:
+      - DEBUG=1
+      - DATABASE_URL=postgresql://crawler:password@db:5432/lawyers_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+    networks:
+      - crawler-network
+
+  celery-beat:
+    build: .
+    command: celery -A lawyers_project beat -l info
+    environment:
+      - DEBUG=1
+      - DATABASE_URL=postgresql://crawler:password@db:5432/lawyers_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+    networks:
+      - crawler-network
+
 volumes:
   postgres_data:
+  redis_data:
 
 networks:
   crawler-network:
