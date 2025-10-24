@@ -12,7 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-change-this-in-production')
 
-DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+DEBUG = os.getenv('DEBUG', 'False').lower() in ['true', '1']
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', 'web']
 
@@ -33,7 +33,6 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -141,6 +140,10 @@ CORS_ALLOWED_ORIGINS = [
 
 # RocketReach API Configuration
 ROCKETREACH_API_KEY = "1bafa4dk4e1f1689bcb51d576e02ea68d25df379"
+
+# Django Admin Configuration
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000  # Increase limit for admin interface
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10485760  # 10MB
 
 # Simplified logging for Docker
 LOGGING = {

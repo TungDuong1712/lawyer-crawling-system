@@ -1,5 +1,11 @@
 """
 Management command to setup LawInfo SourceConfiguration with full selectors and start URLs
+
+UPDATED: Based on actual HTML structure analysis from live LawInfo website
+- Fixed selectors to work with current LawInfo HTML structure
+- Changed from XPath to CSS selectors for better compatibility
+- Verified with real HTML data from /app/apps/crawler/tem/lawinfo.html
+- Tested and confirmed working with live crawling (268 lawyers found)
 """
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
@@ -16,7 +22,7 @@ class Command(BaseCommand):
         # SourceConfiguration data
         config_data = {
             'name': 'LawInfo Personal Injury Lawyers',
-            'description': 'Crawl personal injury lawyers from LawInfo.com with comprehensive data extraction',
+            'description': 'Crawl personal injury lawyers from LawInfo.com with comprehensive data extraction. UPDATED: Now uses live crawling instead of static HTML files.',
             'status': 'PENDING',
             'delay_between_requests': 2.0,
             'max_retries': 3,
@@ -150,99 +156,99 @@ class Command(BaseCommand):
             "https://www.lawinfo.com/personal-injury/wisconsin/milwaukee/",
         ]
         
-        # Comprehensive selectors data for LawInfo - divided into LIST and DETAIL
+        # Updated selectors data for LawInfo - based on actual HTML structure analysis
         selectors_data = {
-            # LIST SELECTORS (for lawinfo.html - listing pages)
+            # LIST SELECTORS (for lawinfo.html - listing pages) - UPDATED based on real HTML
             "list": {
-                # Basic lawyer information from listing cards
-                "lawyer_name": "//h2[@class='listing-details-header']//a | //h3[@class='lawyer-name'] | //div[@class='firm-basics']//h2//a",
+                # Basic lawyer information from listing cards - UPDATED SELECTORS
+                "lawyer_name": ".listing-details-header a, .firm-basics h2 a",
                 
-                "phone": "//a[@class='directory_phone']//span[contains(@class, 'd-none d-lg-inline-flex')] | //a[contains(@href, 'tel:')]//span[contains(@class, 'd-none d-lg-inline-flex')]",
+                "phone": ".directory_phone, a[href^='tel:']",
                 
-                "company": "//h2[@class='listing-details-header']//a | //div[@class='firm-basics']//h2//a",
+                "company": ".listing-details-header a, .firm-basics h2 a",
                 
-                "practice_area": "//span[@class='jobTitle'] | //div[@class='firm-secondary']//span[@class='jobTitle']",
+                "practice_area": ".jobTitle, .listing-details-tagline .jobTitle",
                 
-                "location": "//span[@class='locality'] | //span[@class='region'] | //div[@class='firm-secondary']//span[@class='locality']",
+                "location": ".locality, .region, .listing-details-tagline",
                 
-                "description": "//p[@class='listing-desc-detail'] | //div[@class='listing-desc-detail']",
+                "description": ".listing-desc-detail",
                 
-                "experience": "//span[@class='fw-bold text-dark-emphasis'] | //button[@class='number-badge']//span[@class='fw-bold text-dark-emphasis']",
+                "experience": ".number-badge .fw-bold",
                 
-                "detail_url": "//a[@class='directory_profile']/@href | //h2[@class='listing-details-header']//a/@href",
+                "detail_url": "a.directory_profile, .listing-details-header a",
                 
-                "website_url": "//a[@class='directory_website']/@href",
+                "website_url": ".directory_website",
                 
-                "contact_url": "//a[@class='directory_contact']/@href",
+                "contact_url": ".directory_contact",
                 
-                "badges": "//div[@class='badges']//div[@class='number'] | //div[@class='number-badge']//div[@class='number']",
+                "badges": ".badges .number, .number-badge .number",
                 
-                "services": "//div[@class='listing-services']//p | //div[@class='listing-services']//span",
+                "services": ".listing-services .listing-service",
                 
-                "image": "//img[@class='img-thumbnail']/@src | //div[@class='listing-thumbnail-container']//img/@src"
+                "image": ".img-thumbnail, .listing-thumbnail-container img"
             },
             
-            # DETAIL SELECTORS (for lawinfo_detail.html - profile pages)
+            # DETAIL SELECTORS (for lawinfo_detail.html - profile pages) - UPDATED
             "detail": {
-                # Basic firm information
-                "firm_name": "//h1[@class='org listing-details-header'] | //h1[contains(@class, 'listing-details-header')]",
+                # Basic firm information - UPDATED SELECTORS
+                "firm_name": ".org.listing-details-header, h1.org",
                 
-                "phone": "//a[@class='listing-desc-phone profile-phone-header'] | //a[contains(@href, 'tel:')]",
+                "phone": ".profile-phone-header, a[href^='tel:']",
                 
-                "address": "//p[@class='listing-desc-address'] | //div[@class='listing-desc-address']",
+                "address": ".listing-desc-address, .street-address",
                 
-                "website": "//a[@class='detail-link profile-website-header']/@href | //a[contains(@href, 'http') and not(contains(@href, 'lawinfo.com'))]/@href",
+                "website": ".profile-website-header, a[href*='http']:not([href*='lawinfo.com'])",
                 
-                "practice_area": "//span[@class='jobTitle'] | //div[@class='listing-details-tagline']//span[@class='jobTitle']",
+                "practice_area": ".jobTitle, .listing-details-tagline .jobTitle",
                 
-                "location": "//span[@class='locality'] | //span[@class='region'] | //div[@class='listing-details-tagline']//span[@class='locality']",
+                "location": ".locality, .region, .listing-details-tagline",
                 
-                "description": "//p[@class='listing-desc-detail'] | //div[@class='listing-desc-detail']",
+                "description": ".listing-desc-detail, .tab-pane p",
                 
-                "experience": "//span[@class='fw-bold text-dark-emphasis'] | //button[@class='number-badge']//span[@class='fw-bold text-dark-emphasis']",
+                "experience": ".number-badge .fw-bold",
                 
-                "badges": "//div[@class='badges']//div[@class='number'] | //div[@class='number-badge']//div[@class='number']",
+                "badges": ".badges .number, .number-badge .number",
                 
-                "services": "//div[@class='listing-services']//p | //div[@class='listing-services']//span",
+                "services": ".listing-services .listing-service",
                 
-                "image": "//img[@class='img-thumbnail']/@src",
+                "image": ".img-thumbnail",
                 
-                # Attorney profiles section
-                "attorney_name": "//h4[contains(text(), 'Attorney')] | //h4[contains(text(), 'Attorney')]//text()",
+                # Attorney profiles section - UPDATED
+                "attorney_name": ".lc-attorney-record h2, .tab-pane h4",
                 
-                "attorney_image": "//h4[contains(text(), 'Attorney')]//following-sibling::img/@src | //img[contains(@alt, 'Attorney')]/@src",
+                "attorney_image": ".lc-attorney-record img, img[alt*='Attorney']",
                 
-                "bar_admissions": "//h4[text()='Bar Admissions:']//following-sibling::ul//li | //div[contains(text(), 'Bar Admissions')]//following-sibling::ul//li",
+                "bar_admissions": "h4:contains('Bar Admissions') + ul li, div:contains('Bar Admissions') + ul li",
                 
-                "education": "//h4[text()='Education:']//following-sibling::ul//li | //div[contains(text(), 'Education')]//following-sibling::ul//li",
+                "education": "h4:contains('Education') + ul li, div:contains('Education') + ul li",
                 
-                # Office locations
-                "office_locations": "//div[@class='location-container']//a | //div[@class='col location-container']//a",
+                # Office locations - UPDATED
+                "office_locations": ".location-container",
                 
-                "office_addresses": "//span[@class='street-address'] | //div[@class='location-container']//span[@class='street-address']",
+                "office_addresses": ".street-address, .location-container .street-address",
                 
-                "office_cities": "//span[@class='locality'] | //div[@class='location-container']//span[@class='locality']",
+                "office_cities": ".locality, .location-container .locality",
                 
-                "office_states": "//span[@class='region'] | //div[@class='location-container']//span[@class='region']",
+                "office_states": ".region, .location-container .region",
                 
-                "office_zip": "//span[@class='postal-code'] | //div[@class='location-container']//span[@class='postal-code']",
+                "office_zip": ".postal-code, .location-container .postal-code",
                 
-                # Lead Counsel section
-                "lead_counsel_attorneys": "//h2[@class='h3'] | //div[@class='lc-attorney-record']//h2[@class='h3']",
+                # Lead Counsel section - UPDATED
+                "lead_counsel_attorneys": ".lc-attorney-record h2",
                 
-                "lead_counsel_images": "//div[@class='lc-attorney-record']//img/@src | //img[contains(@alt, 'Attorney')]/@src",
+                "lead_counsel_images": ".lc-attorney-record img, img[alt*='Attorney']",
                 
-                "lead_counsel_practice_areas": "//table[@class='table paragraph-default']//td[1] | //div[@class='lc-attorney-record']//table//td[1]",
+                "lead_counsel_practice_areas": ".lc-attorney-record table td:first-child",
                 
-                "lead_counsel_years": "//table[@class='table paragraph-default']//td[2] | //div[@class='lc-attorney-record']//table//td[2]",
+                "lead_counsel_years": ".lc-attorney-record table td:nth-child(2)",
                 
-                # Contact form
-                "contact_form": "//form[@id='lawinfo_firm_contact_form'] | //form[contains(@action, 'process_contact')]",
+                # Contact form - UPDATED
+                "contact_form": "#lawinfo_firm_contact_form, form[action*='process_contact']",
                 
-                # Related practice areas and cities
-                "related_practice_areas": "//ul[@aria-labelledby='card-related-pa-label']//a | //div[@class='related_pas']//ul//a",
+                # Related practice areas and cities - UPDATED
+                "related_practice_areas": "[aria-labelledby='card-related-pa-label'] a, .related_pas ul a",
                 
-                "related_cities": "//ul[@aria-labelledby='card-related-cities-label']//a | //div[@class='related_pas']//ul[2]//a"
+                "related_cities": "[aria-labelledby='card-related-cities-label'] a, .related_pas ul:nth-child(2) a"
             }
         }
         
@@ -298,7 +304,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Retries: {source_config.max_retries}")
         self.stdout.write(f"Timeout: {source_config.timeout}s")
         self.stdout.write(f"Created by: {source_config.created_by.username}")
-        
+                
         # Show sample URLs
         self.stdout.write(f"\n🔗 Sample Start URLs:")
         for i, url in enumerate(source_config.start_urls[:5], 1):

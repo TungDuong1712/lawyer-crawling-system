@@ -19,7 +19,11 @@ class Lawyer(models.Model):
     practice_areas = models.TextField(blank=True)
     attorney_details = models.TextField(blank=True)
     website = models.URLField(blank=True)
-    email = models.EmailField(blank=True)
+    email = models.EmailField(blank=True)  # Primary email
+    
+    # Multiple emails support (for companies with multiple employees)
+    company_emails = models.JSONField(default=list, blank=True)  # List of emails for company
+    employee_contacts = models.JSONField(default=list, blank=True)  # List of employee contact info
     
     # Professional credentials
     law_school = models.CharField(max_length=200, blank=True)
@@ -199,6 +203,124 @@ class Lawyer(models.Model):
         self.completeness_score = self.calculate_completeness_score()
         self.quality_score = self.calculate_quality_score()
         super().save(*args, **kwargs)
+    
+    def add_company_email(self, email, email_type='general', contact_name='', contact_title='', 
+                          source='rocketreach', confidence_score=0.0):
+        """Add a new email to the company using JSONField"""
+        from datetime import datetime
+        
+        # Initialize company_emails if empty
+        if not self.company_emails:
+            self.company_emails = []
+        
+        # Check if email already exists
+        for existing_email in self.company_emails:
+            if existing_email.get('email') == email:
+                return False
+        
+        # Add new email to JSONField
+        new_email = {
+            'email': email,
+            'type': email_type,
+            'contact_name': contact_name,
+            'contact_title': contact_title,
+            'source': source,
+            'confidence': confidence_score,
+            'verified': False,
+            'created_at': datetime.now().isoformat()
+        }
+        
+        self.company_emails.append(new_email)
+        self.save(update_fields=['company_emails'])
+        
+        return new_email
+    
+    def get_all_emails(self):
+        """Get all emails for this company/lawyer"""
+        emails = []
+        seen_emails = set()
+        
+        # Primary email (only if not already in company emails)
+        if self.email and self.email not in seen_emails:
+            emails.append({
+                'email': self.email,
+                'type': 'primary',
+                'source': 'crawled',
+                'verified': True,
+                'contact_name': self.attorney_name or 'N/A',
+                'contact_title': 'Attorney'
+            })
+            seen_emails.add(self.email)
+        
+        # Company emails from JSONField
+        if self.company_emails:
+            for company_email in self.company_emails:
+                if company_email.get('email') not in seen_emails:
+                    emails.append({
+                        'email': company_email.get('email'),
+                        'type': company_email.get('type', 'general'),
+                        'source': company_email.get('source', 'unknown'),
+                        'verified': company_email.get('verified', False),
+                        'contact_name': company_email.get('contact_name', 'N/A'),
+                        'contact_title': company_email.get('contact_title', 'N/A'),
+                        'confidence': company_email.get('confidence', 0.0)
+                    })
+                    seen_emails.add(company_email.get('email'))
+        
+        return emails
+    
+    def get_verified_emails(self):
+        """Get only verified emails"""
+        return [email for email in self.get_all_emails() if email.get('verified', False)]
+    
+    def get_emails_by_type(self, email_type):
+        """Get emails by type"""
+        return [email for email in self.get_all_emails() if email.get('type') == email_type]
+    
+    def get_lawyer_employee_emails(self):
+        """Get all emails specifically for lawyer employees"""
+        return self.get_all_emails()
+    
+    def get_professional_emails(self):
+        """Get professional emails for lawyer"""
+        return self.get_emails_by_type('professional')
+    
+    def get_personal_emails(self):
+        """Get personal emails for lawyer"""
+        return self.get_emails_by_type('personal')
+    
+    def get_previous_emails(self):
+        """Get previous work emails for lawyer"""
+        return self.get_emails_by_type('previous')
+    
+    def get_best_contact_email(self):
+        """Get the best contact email for the lawyer"""
+        all_emails = self.get_all_emails()
+        
+        # Priority order: primary > professional > personal > previous
+        priority_order = ['primary', 'professional', 'personal', 'previous']
+        
+        for priority in priority_order:
+            for email in all_emails:
+                if email.get('type') == priority:
+                    return email
+        
+        # If no emails found, return None
+        return None
+    
+    def get_contact_summary(self):
+        """Get a summary of all contact information for the lawyer"""
+        return {
+            'lawyer_name': self.attorney_name,
+            'company_name': self.company_name,
+            'practice_area': self.practice_area,
+            'location': f"{self.city}, {self.state}",
+            'total_emails': len(self.get_all_emails()),
+            'best_contact': self.get_best_contact_email(),
+            'professional_emails': len(self.get_professional_emails()),
+            'personal_emails': len(self.get_personal_emails()),
+            'previous_emails': len(self.get_previous_emails())
+        }
 
 
 class RocketReachLookup(models.Model):
@@ -221,20 +343,38 @@ class RocketReachLookup(models.Model):
     lookup_domain = models.CharField(max_length=100, blank=True)  # Domain used for lookup
     
     # API response data
-    rocketreach_id = models.CharField(max_length=100, blank=True)  # RocketReach person ID
-    email = models.EmailField(blank=True)  # Found email
-    phone = models.CharField(max_length=50, blank=True)  # Found phone
-    linkedin_url = models.URLField(blank=True)  # LinkedIn profile
-    twitter_url = models.URLField(blank=True)  # Twitter profile
-    facebook_url = models.URLField(blank=True)  # Facebook profile
+    rocketreach_id = models.CharField(max_length=100, blank=True, null=True)  # RocketReach person ID
+    email = models.EmailField(blank=True, null=True)  # Found email
+    phone = models.CharField(max_length=50, blank=True, null=True)  # Found phone
+    linkedin_url = models.URLField(blank=True, null=True)  # LinkedIn profile
+    twitter_url = models.URLField(blank=True, null=True)  # Twitter profile
+    facebook_url = models.URLField(blank=True, null=True)  # Facebook profile
     
     # Professional information
-    current_title = models.CharField(max_length=200, blank=True)  # Current job title
-    current_company = models.CharField(max_length=300, blank=True)  # Current company
-    location = models.CharField(max_length=200, blank=True)  # Location
+    current_title = models.CharField(max_length=200, blank=True, null=True)  # Current job title
+    current_company = models.CharField(max_length=300, blank=True, null=True)  # Current company
+    location = models.CharField(max_length=200, blank=True, null=True)  # Location
+    
+    # Additional professional data
+    birth_year = models.IntegerField(null=True, blank=True)  # Birth year
+    job_history = models.JSONField(default=list, blank=True)  # Complete work experience
+    education = models.JSONField(default=list, blank=True)  # Academic background
+    skills = models.JSONField(default=list, blank=True)  # Professional skills
+    
+    # Location coordinates
+    region_latitude = models.FloatField(null=True, blank=True)  # Latitude
+    region_longitude = models.FloatField(null=True, blank=True)  # Longitude
+    
+    # Email and phone validation
+    email_validation_status = models.CharField(max_length=50, blank=True)  # Email validation status
+    phone_validation_status = models.CharField(max_length=50, blank=True)  # Phone validation status
+    
+    # Employee emails from company search
+    employee_emails = models.JSONField(default=list, blank=True)  # All employee emails found
     
     # Raw API response
     raw_response = models.JSONField(default=dict, blank=True)  # Full API response
+    raw_data = models.JSONField(default=dict, blank=True)  # All raw API responses for debugging
     
     # Status and metadata
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
@@ -292,5 +432,7 @@ class RocketReachLookup(models.Model):
             self.lawyer.save(update_fields=['email'])
             return True
         return False
+
+
 
 

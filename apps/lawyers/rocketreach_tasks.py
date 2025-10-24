@@ -5,6 +5,7 @@ Celery tasks for RocketReach email lookup
 from celery import shared_task
 from django.conf import settings
 import logging
+import os
 from typing import List, Dict
 
 from .models import Lawyer, RocketReachLookup
@@ -30,7 +31,8 @@ def lookup_lawyer_email_task(self, lawyer_id: int, force_refresh: bool = False):
         lawyer = Lawyer.objects.get(id=lawyer_id)
         
         # Initialize RocketReach service
-        api_key = getattr(settings, 'ROCKETREACH_API_KEY', None)
+        api_key = getattr(settings, 'ROCKETREACH_API_KEY', None) or os.getenv('ROCKETREACH_API_KEY')
+        print(f"DEBUG: ROCKETREACH_API_KEY from settings: {api_key}")
         if not api_key:
             raise ValueError("ROCKETREACH_API_KEY not configured")
         

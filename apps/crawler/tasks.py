@@ -139,33 +139,85 @@ def crawl_session_task(session_id):
     session.status = 'DISCOVERING'
     session.save()
     
-    # Update progress
-    update_crawl_progress(session_id)
+    # Create DiscoveryURL objects from start_urls if they don't exist
+    if not session.discovery_urls.exists():
+        for url in session.start_urls:
+            # Extract domain, practice_area, state, city from URL
+            domain = 'lawinfo' if 'lawinfo.com' in url else 'superlawyers' if 'superlawyers.com' in url else 'unknown'
+            
+            # Parse URL for practice area, state, city
+            url_parts = url.split('/')
+            practice_area = ''
+            state = ''
+            city = ''
+            
+            if 'lawinfo.com' in url:
+                # LawInfo URL format: https://www.lawinfo.com/practice-area/state/city/
+                # url_parts: ['https:', '', 'www.lawinfo.com', 'personal-injury', 'arizona', 'chandler', '']
+                if len(url_parts) >= 6:
+                    practice_area = url_parts[3].replace('-', ' ').title()  # personal-injury -> Personal Injury
+                    state = url_parts[4].replace('-', ' ').title()          # arizona -> Arizona
+                    if len(url_parts) >= 6:
+                        city = url_parts[5].replace('-', ' ').title()       # chandler -> Chandler
+            elif 'superlawyers.com' in url:
+                # SuperLawyers URL format: https://attorneys.superlawyers.com/practice-area/state/city/
+                # url_parts: ['https:', '', 'attorneys.superlawyers.com', 'family-law', 'new-mexico', 'albuquerque', '']
+                if len(url_parts) >= 6:
+                    practice_area = url_parts[3].replace('-', ' ').title()  # family-law -> Family Law
+                    state = url_parts[4].replace('-', ' ').title()          # new-mexico -> New Mexico
+                    if len(url_parts) >= 6:
+                        city = url_parts[5].replace('-', ' ').title()       # albuquerque -> Albuquerque
+            
+            DiscoveryURL.objects.create(
+                source_config=session,
+                url=url,
+                domain=domain,
+                practice_area=practice_area,
+                state=state,
+                city=city,
+                status='PENDING'
+            )
+        logger.info(f"Created {len(session.start_urls)} discovery URLs for session {session_id}")
+    
+    # Set total URLs and update progress (always set, regardless of whether URLs were created)
+    session.total_urls = session.discovery_urls.count()
+    session.save()
+    update_crawl_progress.delay(session_id)
     
     tasks = session.discovery_urls.all()
     success_count = 0
     error_count = 0
     
+    logger.info(f"Starting crawl for {tasks.count()} URLs")
+    
     for task in tasks:
         try:
-            lawyers_found = crawl_single_url(task)
+            # Step 1: Crawl basic lawyer info and extract detail URLs
+            lawyers_found = crawl_basic_lawyer_info_task(task.id)
             task.status = 'completed'
             task.lawyers_found = lawyers_found
             success_count += 1
+            logger.info(f"Completed Step 1 for URL: {task.url} - Found {lawyers_found} lawyers")
         except Exception as e:
             task.status = 'failed'
             task.error_message = str(e)
             error_count += 1
+            logger.error(f"Failed Step 1 for URL: {task.url} - Error: {e}")
         
         task.save()
     
     # Update session
     session.success_count = success_count
     session.error_count = error_count
+    session.crawled_urls = session.discovery_urls.count()
     session.status = 'DONE'
     session.completed_at = timezone.now()
     session.save()
     
+    # Update progress
+    update_crawl_progress.delay(session_id)
+    
+    logger.info(f"Session {session_id} completed: {success_count} success, {error_count} errors")
     return f"Session completed: {success_count} success, {error_count} errors"
 
 
@@ -200,10 +252,6 @@ def crawl_single_url(crawl_task):
     url = crawl_task.url
     domain = crawl_task.domain
     
-    # For lawinfo domain, use real HTML file if available
-    if domain == 'lawinfo' and 'lawinfo.com' in url:
-        return crawl_lawinfo_with_real_html(crawl_task)
-    
     # Use AntiDetectionManager for better stealth
     anti_detection = AntiDetectionManager()
     
@@ -224,26 +272,6 @@ def crawl_single_url(crawl_task):
         return create_sample_lawyers_for_url(crawl_task)
 
 
-def crawl_lawinfo_with_real_html(crawl_task):
-    """
-    Crawl lawinfo using real HTML file
-    """
-    try:
-        # Read real HTML file
-        html_file_path = '/app/apps/crawler/tem/lawinfo.html'
-        with open(html_file_path, 'r', encoding='utf-8') as f:
-            html_content = f.read()
-        
-        soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # Extract lawyer information using real HTML
-        lawyers = extract_lawyers_from_soup(soup, 'lawinfo', crawl_task)
-        
-        return len(lawyers)
-        
-    except Exception as e:
-        logger.warning(f"Real HTML crawl failed: {e}. Using sample data.")
-        return create_sample_lawyers_for_url(crawl_task)
 
 
 def create_sample_lawyers_for_url(crawl_task):
@@ -296,8 +324,26 @@ def extract_lawyers_from_soup(soup, domain, crawl_task):
         try:
             lawyer_data = extract_single_lawyer(container, selectors, crawl_task)
             if lawyer_data:
-                lawyer = Lawyer.objects.create(**lawyer_data)
-                lawyers.append(lawyer)
+                # Check if lawyer already exists to avoid duplicates
+                # Only check company_name, domain, and practice_area (ignore city/state)
+                existing_lawyer = Lawyer.objects.filter(
+                    company_name=lawyer_data['company_name'],
+                    domain=lawyer_data['domain'],
+                    practice_area=lawyer_data['practice_area']
+                ).first()
+                
+                if existing_lawyer:
+                    # Update existing lawyer with new location info
+                    logger.info(f"Found existing lawyer: {existing_lawyer.company_name}, updating location to {lawyer_data['city']}, {lawyer_data['state']}")
+                    existing_lawyer.city = lawyer_data['city']
+                    existing_lawyer.state = lawyer_data['state']
+                    existing_lawyer.save()
+                    lawyers.append(existing_lawyer)
+                else:
+                    # Create new lawyer
+                    logger.info(f"Creating new lawyer: {lawyer_data['company_name']} in {lawyer_data['city']}, {lawyer_data['state']}")
+                    lawyer = Lawyer.objects.create(**lawyer_data)
+                    lawyers.append(lawyer)
         except Exception as e:
             continue  # Skip failed extractions
     
@@ -338,9 +384,9 @@ def get_domain_selectors(domain):
             'lead_counsel': '.lc-attorney-record'
         },
         'superlawyers': {
-            'container': '.attorney-card, .lawyer-profile, .attorney-listing',
-            'company_name': '.attorney-name, .firm-name, .lawyer-name',
-            'phone': '.phone-number, .contact-info .phone',
+            'container': '.card',
+            'company_name': 'h2, h3, h4, .attorney-name, .firm-name, .lawyer-name',
+            'phone': '.phone-number, .contact-info .phone, a[href^="tel:"]',
             'address': '.address, .location-info, .office-address',
             'practice_areas': '.practice-areas, .specialties',
             'website': '.website-link, .firm-website, a[href*="http"]',
@@ -655,7 +701,7 @@ def crawl_basic_lawyer_info_task(self, discovery_url_id):
         discovery_url.completed_at = timezone.now()
         discovery_url.save()
         
-        return f"Successfully crawled {lawyers_found} basic lawyer info from {discovery_url.url}"
+        return lawyers_found
         
     except Exception as exc:
         if discovery_url:

@@ -31,8 +31,9 @@ def crawl_single_url_basic(discovery_url):
     domain = discovery_url.domain
     
     # For lawinfo domain, use real HTML file if available
-    if domain == 'lawinfo' and 'lawinfo.com' in url:
-        return crawl_lawinfo_basic_with_real_html(discovery_url)
+    # DISABLED: Use live crawling instead of static HTML file
+    # if domain == 'lawinfo' and 'lawinfo.com' in url:
+    #     return crawl_lawinfo_basic_with_real_html(discovery_url)
     
     # Use AntiDetectionManager for better stealth
     anti_detection = AntiDetectionManager()
