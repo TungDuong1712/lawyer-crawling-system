@@ -45,8 +45,7 @@ class LawyerAdmin(admin.ModelAdmin):
         }),
     )
     
-    actions = ['', 'update_emails_from_rocketreach', 'add_company_email', 'view_all_emails']
-    lookup_email_rocketreach
+    actions = ['lookup_email_rocketreach', 'update_emails_from_rocketreach', 'add_company_email', 'view_all_emails']
     def email_count(self, obj):
         """Display total number of emails"""
         return len(obj.get_all_emails())
@@ -128,7 +127,7 @@ class RocketReachLookupAdmin(admin.ModelAdmin):
     list_display = ['lawyer', 'lookup_name', 'email', 'status', 'confidence_score', 'email_validation_status', 'lookup_timestamp']
     list_filter = ['status', 'lookup_timestamp', 'lawyer__domain', 'lawyer__entity_type', 'email_validation_status']
     search_fields = ['lawyer__company_name', 'lookup_name', 'email', 'current_company', 'contact_name']
-    readonly_fields = ['lookup_timestamp', 'updated_at', 'api_credits_used', 'raw_response_display', 'raw_data_display']
+    readonly_fields = ['lookup_timestamp', 'updated_at', 'api_credits_used', 'raw_response_display', 'raw_data_display', 'employee_emails_display']
     list_per_page = 50
     
     fieldsets = (
@@ -215,18 +214,39 @@ class RocketReachLookupAdmin(admin.ModelAdmin):
                     
                     return "\n".join(summary)
                 
-                # Check if it's a person search response
+                # Check if it's a person search response (current format with 'profiles')
                 elif 'profiles' in obj.raw_response:
                     profiles = obj.raw_response.get('profiles', [])
+                    pagination = obj.raw_response.get('pagination', {})
                     summary = []
                     summary.append(f"👤 Person Search API Response:")
-                    summary.append(f"   Total profiles: {len(profiles)}")
+                    summary.append(f"   Total profiles: {len(profiles)} (API total: {pagination.get('total', 0)})")
                     
-                    for i, profile in enumerate(profiles[:3]):  # Show first 3 profiles
+                    for i, profile in enumerate(profiles[:5]):  # Show first 5 profiles
                         name = profile.get('name', 'N/A')
                         title = profile.get('current_title', 'N/A')
                         company = profile.get('current_employer', 'N/A')
-                        summary.append(f"   {i+1}. {name} - {title} at {company}")
+                        location = profile.get('location', 'N/A')
+                        status = profile.get('status', 'N/A')
+                        summary.append(f"   {i+1}. {name} - {title} at {company} ({location}) [{status}]")
+                    
+                    return "\n".join(summary)
+                
+                # Check if it's a person search response (new format with 'people')
+                elif 'people' in obj.raw_response:
+                    people = obj.raw_response.get('people', [])
+                    pagination = obj.raw_response.get('pagination', {})
+                    summary = []
+                    summary.append(f"👤 Person Search API Response (New Format):")
+                    summary.append(f"   Total people: {len(people)} (API total: {pagination.get('total', 0)})")
+                    
+                    for i, person in enumerate(people[:5]):  # Show first 5 people
+                        name = person.get('name', 'N/A')
+                        title = person.get('current_title', 'N/A')
+                        company = person.get('current_employer', 'N/A')
+                        location = person.get('location', 'N/A')
+                        status = person.get('status', 'N/A')
+                        summary.append(f"   {i+1}. {name} - {title} at {company} ({location}) [{status}]")
                     
                     return "\n".join(summary)
                 
@@ -262,6 +282,14 @@ class RocketReachLookupAdmin(admin.ModelAdmin):
                 for i, company in enumerate(companies[:3]):  # Show first 3 companies
                     summary.append(f"  {i+1}. {company.get('name', 'N/A')} (ID: {company.get('id', 'N/A')})")
             
+            # Company lookup results
+            if 'company_lookup' in obj.raw_data:
+                company_lookup = obj.raw_data['company_lookup']
+                company_name = company_lookup.get('name', 'N/A')
+                company_domain = company_lookup.get('domain', 'N/A')
+                industry = company_lookup.get('industry', 'N/A')
+                summary.append(f"Company Lookup: {company_name} (Domain: {company_domain}, Industry: {industry})")
+            
             # Employee search results
             if 'company_employees' in obj.raw_data:
                 employee_data = obj.raw_data['company_employees']
@@ -290,15 +318,32 @@ class RocketReachLookupAdmin(admin.ModelAdmin):
         
         try:
             summary = []
-            for i, email_info in enumerate(obj.employee_emails[:10]):  # Show first 10
+            for i, email_info in enumerate(obj.employee_emails[:15]):  # Show first 15
                 name = email_info.get('name', 'N/A')
                 title = email_info.get('title', 'N/A')
                 email_domain = email_info.get('email_domain', 'N/A')
                 email_type = email_info.get('email_type', 'N/A')
-                summary.append(f"{i+1}. {name} ({title}) - {email_domain} ({email_type})")
+                confidence = email_info.get('confidence', 'unknown')
+                note = email_info.get('note', '')
+                full_emails = email_info.get('full_emails', [])
+                
+                # Add confidence indicator
+                confidence_icon = "✅" if confidence == 'high' else "⚠️" if confidence == 'low' else "❓"
+                
+                # Format the line
+                line = f"{i+1}. {confidence_icon} {name} ({title}) - {email_domain} ({email_type})"
+                if full_emails:
+                    line += f" 📧 {', '.join(full_emails)}"
+                if note:
+                    line += f" - {note}"
+                
+                summary.append(line)
             
-            if len(obj.employee_emails) > 10:
-                summary.append(f"... and {len(obj.employee_emails) - 10} more")
+            if len(obj.employee_emails) > 15:
+                summary.append(f"... and {len(obj.employee_emails) - 15} more")
+            
+            # Add legend
+            summary.append("\nLegend: ✅ High confidence | ⚠️ Low confidence | ❓ Unknown | 📧 Full email")
             
             return "\n".join(summary)
         except Exception as e:

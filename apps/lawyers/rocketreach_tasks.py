@@ -39,24 +39,25 @@ def lookup_lawyer_email_task(self, lawyer_id: int, force_refresh: bool = False):
         service = RocketReachLookupService(api_key)
         
         # Perform lookup
-        lookup = service.lookup_lawyer_email(lawyer, force_refresh)
+        lookup = service.lookup_lawyer_email(lawyer_id, force_refresh)
         
-        if lookup:
+        # lookup is now a dict, not an object
+        if lookup and lookup.get('success'):
             return {
                 'success': True,
                 'lawyer_id': lawyer_id,
                 'lawyer_name': lawyer.company_name,
-                'email': lookup.email,
-                'confidence': lookup.confidence_score,
-                'status': lookup.status,
-                'lookup_id': lookup.id
+                'email': lookup.get('email'),
+                'confidence': lookup.get('confidence', 0),
+                'status': lookup.get('status'),
+                'lookup_id': lookup.get('lookup_id')
             }
         else:
             return {
                 'success': False,
                 'lawyer_id': lawyer_id,
                 'lawyer_name': lawyer.company_name,
-                'error': 'Lookup failed'
+                'error': lookup.get('error', 'Lookup failed') if lookup else 'Lookup failed'
             }
             
     except Lawyer.DoesNotExist:

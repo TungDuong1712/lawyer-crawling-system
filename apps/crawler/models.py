@@ -84,6 +84,10 @@ class DiscoveryURL(models.Model):
     lawyers_found = models.IntegerField(default=0)
     error_message = models.TextField(blank=True)
     
+    # Pagination tracking
+    current_page = models.IntegerField(default=1)
+    total_pages = models.IntegerField(default=1)
+    
     # Celery task ID
     celery_task_id = models.CharField(max_length=255, blank=True)
     

@@ -258,10 +258,10 @@ class SourceConfigurationAdmin(admin.ModelAdmin):
 
 @admin.register(DiscoveryURL)
 class DiscoveryURLAdmin(admin.ModelAdmin):
-    list_display = ['source_config', 'domain', 'practice_area', 'city', 'status', 'lawyers_found', 'created_at']
+    list_display = ['source_config', 'domain', 'practice_area', 'city', 'status', 'pagination_info', 'lawyers_found', 'created_at']
     list_filter = ['status', 'domain', 'practice_area', 'state', 'created_at']
     search_fields = ['url', 'domain', 'city', 'source_config__name']
-    readonly_fields = ['created_at', 'started_at', 'completed_at']
+    readonly_fields = ['created_at', 'started_at', 'completed_at', 'pagination_info']
     actions = ['retry_failed_urls', 'mark_as_pending']
     
     def retry_failed_urls(self, request, queryset):
@@ -280,6 +280,14 @@ class DiscoveryURLAdmin(admin.ModelAdmin):
         queryset.update(status='PENDING', error_message='')
         self.message_user(request, f"Marked {queryset.count()} URLs as pending")
     mark_as_pending.short_description = "Mark as Pending"
+    
+    def pagination_info(self, obj):
+        """Display pagination information"""
+        if obj.total_pages > 1:
+            return f"Page {obj.current_page}/{obj.total_pages}"
+        else:
+            return "Single page"
+    pagination_info.short_description = "Pagination"
 
 
 

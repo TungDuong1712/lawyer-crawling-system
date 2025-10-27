@@ -192,17 +192,28 @@ def crawl_session_task(session_id):
     
     for task in tasks:
         try:
-            # Step 1: Crawl basic lawyer info and extract detail URLs
-            lawyers_found = crawl_basic_lawyer_info_task(task.id)
+            # First, detect pagination and create all page URLs
+            pagination_urls = detect_pagination_and_create_urls(task)
+            
+            # Step 1: Crawl basic lawyer info and extract detail URLs for all pages
+            total_lawyers_found = 0
+            for page_url in pagination_urls:
+                try:
+                    lawyers_found = crawl_basic_lawyer_info_task(page_url.id)
+                    total_lawyers_found += lawyers_found
+                    logger.info(f"Completed page {page_url.current_page} for URL: {task.url} - Found {lawyers_found} lawyers")
+                except Exception as e:
+                    logger.error(f"Failed page {page_url.current_page} for URL: {task.url} - Error: {e}")
+            
             task.status = 'completed'
-            task.lawyers_found = lawyers_found
+            task.lawyers_found = total_lawyers_found
             success_count += 1
-            logger.info(f"Completed Step 1 for URL: {task.url} - Found {lawyers_found} lawyers")
+            logger.info(f"Completed all pages for URL: {task.url} - Total found {total_lawyers_found} lawyers")
         except Exception as e:
             task.status = 'failed'
             task.error_message = str(e)
             error_count += 1
-            logger.error(f"Failed Step 1 for URL: {task.url} - Error: {e}")
+            logger.error(f"Failed pagination detection for URL: {task.url} - Error: {e}")
         
         task.save()
     
@@ -219,6 +230,201 @@ def crawl_session_task(session_id):
     
     logger.info(f"Session {session_id} completed: {success_count} success, {error_count} errors")
     return f"Session completed: {success_count} success, {error_count} errors"
+
+
+def detect_pagination_and_create_urls(discovery_url):
+    """
+    Detect pagination from the first page and create all page URLs
+    """
+    try:
+        # First, crawl the first page to detect pagination
+        anti_detection = AntiDetectionManager()
+        response = anti_detection.make_request(discovery_url.url)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Detect total pages from pagination
+        total_pages = detect_total_pages(soup, discovery_url.domain)
+        logger.info(f"Detected {total_pages} pages for {discovery_url.url}")
+        
+        # Create DiscoveryURL objects for all pages
+        page_urls = []
+        
+        # First page (already exists)
+        discovery_url.current_page = 1
+        discovery_url.total_pages = total_pages
+        discovery_url.save()
+        page_urls.append(discovery_url)
+        
+        # Create additional pages if total_pages > 1
+        if total_pages > 1:
+            for page_num in range(2, total_pages + 1):
+                page_url = create_page_url(discovery_url, page_num)
+                if page_url:
+                    page_urls.append(page_url)
+        
+        return page_urls
+        
+    except Exception as e:
+        logger.error(f"Error detecting pagination for {discovery_url.url}: {e}")
+        # Return just the original URL if pagination detection fails
+        return [discovery_url]
+
+
+def detect_total_pages(soup, domain):
+    """
+    Detect total number of pages from pagination
+    """
+    try:
+        if domain == 'lawinfo':
+            return detect_lawinfo_total_pages(soup)
+        elif domain == 'superlawyers':
+            return detect_superlawyers_total_pages(soup)
+        else:
+            return detect_default_total_pages(soup)
+    except Exception as e:
+        logger.error(f"Error detecting total pages: {e}")
+        return 1
+
+
+def detect_lawinfo_total_pages(soup):
+    """
+    Detect total pages for LawInfo
+    """
+    try:
+        # Look for pagination container
+        pagination = soup.find('div', class_='pagination') or soup.find('nav', class_='pagination')
+        if not pagination:
+            return 1
+        
+        # Find all page links
+        page_links = pagination.find_all('a')
+        max_page = 0
+        
+        for link in page_links:
+            try:
+                page_text = link.get_text().strip()
+                # Skip non-numeric text like "Next", "Previous"
+                if page_text.isdigit():
+                    page_num = int(page_text)
+                    max_page = max(max_page, page_num)
+            except:
+                continue
+        
+        return max_page if max_page > 0 else 1
+        
+    except Exception as e:
+        logger.error(f"Error detecting LawInfo total pages: {e}")
+        return 1
+
+
+def detect_superlawyers_total_pages(soup):
+    """
+    Detect total pages for SuperLawyers
+    """
+    try:
+        # Similar logic to LawInfo
+        pagination = soup.find('div', class_='pagination') or soup.find('nav', class_='pagination')
+        if not pagination:
+            return 1
+        
+        page_links = pagination.find_all('a')
+        max_page = 0
+        
+        for link in page_links:
+            try:
+                page_text = link.get_text().strip()
+                if page_text.isdigit():
+                    page_num = int(page_text)
+                    max_page = max(max_page, page_num)
+            except:
+                continue
+        
+        return max_page if max_page > 0 else 1
+        
+    except Exception as e:
+        logger.error(f"Error detecting SuperLawyers total pages: {e}")
+        return 1
+
+
+def detect_default_total_pages(soup):
+    """
+    Default pagination detection for other domains
+    """
+    try:
+        # Look for common pagination patterns
+        pagination_selectors = [
+            'div.pagination',
+            'nav.pagination',
+            'div.pager',
+            'nav.pager',
+            'ul.pagination',
+            'div.page-numbers'
+        ]
+        
+        pagination = None
+        for selector in pagination_selectors:
+            pagination = soup.select_one(selector)
+            if pagination:
+                break
+        
+        if not pagination:
+            return 1
+        
+        page_links = pagination.find_all('a')
+        max_page = 0
+        
+        for link in page_links:
+            try:
+                page_text = link.get_text().strip()
+                if page_text.isdigit():
+                    page_num = int(page_text)
+                    max_page = max(max_page, page_num)
+            except:
+                continue
+        
+        return max_page if max_page > 0 else 1
+        
+    except Exception as e:
+        logger.error(f"Error detecting default total pages: {e}")
+        return 1
+
+
+def create_page_url(original_url, page_num):
+    """
+    Create a new DiscoveryURL for a specific page number
+    """
+    try:
+        # Create page URL based on domain
+        if 'lawinfo.com' in original_url.url:
+            page_url = f"{original_url.url.rstrip('/')}?page={page_num}"
+        elif 'superlawyers.com' in original_url.url:
+            page_url = f"{original_url.url.rstrip('/')}?page={page_num}"
+        else:
+            # Default pattern
+            separator = '&' if '?' in original_url.url else '?'
+            page_url = f"{original_url.url}{separator}page={page_num}"
+        
+        # Create new DiscoveryURL
+        page_discovery_url = DiscoveryURL.objects.create(
+            source_config=original_url.source_config,
+            url=page_url,
+            domain=original_url.domain,
+            practice_area=original_url.practice_area,
+            state=original_url.state,
+            city=original_url.city,
+            status='PENDING',
+            current_page=page_num,
+            total_pages=original_url.total_pages
+        )
+        
+        logger.info(f"Created page URL: {page_url}")
+        return page_discovery_url
+        
+    except Exception as e:
+        logger.error(f"Error creating page URL for page {page_num}: {e}")
+        return None
 
 
 @shared_task
