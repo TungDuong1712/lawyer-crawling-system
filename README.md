@@ -1,16 +1,18 @@
-# 🏛️ Lawyer Data Crawling System
+# 🏛️ Lawyer Data Crawling & Email Discovery System
 
-A comprehensive Django-based web scraping system for collecting lawyer information from various legal websites.
+A comprehensive Django-based web scraping system for collecting lawyer information and discovering professional email addresses using RocketReach API integration.
 
 ## 🚀 Features
 
 - **Multi-domain crawling**: Support for lawinfo.com, superlawyers.com
 - **2-Step Crawling**: Basic info + detailed information extraction
+- **RocketReach Integration**: Professional email discovery and validation
+- **Email Management**: Primary emails, company emails, employee contact discovery
 - **Domain-specific configurations**: Real states and cities from LawInfo
-- **Django Admin Interface**: Full admin interface for data management
-- **Background tasks**: Celery-based asynchronous crawling
+- **Django Admin Interface**: Streamlined admin interface focused on email data
+- **Background tasks**: Celery-based asynchronous crawling and email lookup
 - **Docker support**: Complete containerization with Docker Compose
-- **Data quality scoring**: Automatic completeness and quality scoring
+- **Data Export**: CSV export with detailed email information
 - **Anti-detection**: Cloudflare bypass and anti-bot measures
 
 ## 📋 Requirements
@@ -20,28 +22,11 @@ A comprehensive Django-based web scraping system for collecting lawyer informati
 - PostgreSQL 15+
 - Redis 7+
 - Docker & Docker Compose
+- RocketReach API Key (for email discovery)
 
 ## 🛠️ Installation
 
 ### Docker Setup (Recommended)
-
-#### Simple Setup (Fastest)
-```bash
-# Clone repository
-git clone <repository-url>
-cd lawyer-crawling-system
-
-# Start services
-docker compose -f docker-compose.simple.yml up --build
-
-# Run migrations
-docker compose exec web python manage.py migrate
-
-# Create sample data
-docker compose exec web python manage.py create_sample_data
-```
-
-#### Full Setup
 ```bash
 # Start all services
 docker compose up --build
@@ -90,7 +75,7 @@ python manage.py runserver
 # Clone and start
 git clone <repository-url>
 cd lawyer-crawling-system
-docker compose -f docker-compose.simple.yml up --build
+docker compose up --build
 
 # Run migrations
 docker compose exec web python manage.py migrate
@@ -105,26 +90,41 @@ docker compose exec web python manage.py setup_lawinfo
 docker compose exec web python manage.py setup_superlawyers
 ```
 
-### Step 3: Start Crawling
+### Step 3: Configure RocketReach API
+```bash
+# Set RocketReach API key in environment
+export ROCKETREACH_API_KEY="your_api_key_here"
+
+# Or add to docker-compose.yml environment section
+```
+
+### Step 4: Start Crawling
 ```bash
 # Access admin interface to start crawling
 # http://localhost:8001/admin/crawler/sourceconfiguration/
 ```
 
-### Step 4: Access Admin Interface
+### Step 5: Access Admin Interface
 - **Admin**: http://localhost:8001/admin/
 - **Source Configurations**: http://localhost:8001/admin/crawler/sourceconfiguration/
-- **Discovery URLs**: http://localhost:8001/admin/crawler/discoveryurl/
 - **Lawyers**: http://localhost:8001/admin/lawyers/lawyer/
+- **RocketReach Lookups**: http://localhost:8001/admin/lawyers/rocketreachlookup/
 
-### Step 6: Check Results
+### Step 6: Start Email Discovery
 ```bash
-# View crawled lawyers
+# Start RocketReach email lookup for lawyers
+# Use admin interface: Lawyers -> Select lawyers -> "Lookup emails with RocketReach"
+```
+
+### Step 7: Check Results
+```bash
+# View crawled lawyers with email data
 docker compose exec web python manage.py shell -c "
-from apps.lawyers.models import Lawyer
+from apps.lawyers.models import Lawyer, RocketReachLookup
 print(f'Total lawyers: {Lawyer.objects.count()}')
-for lawyer in Lawyer.objects.all()[:5]:
-    print(f'- {lawyer.company_name} ({lawyer.phone}) - Quality: {lawyer.quality_score}')
+print(f'Lawyers with emails: {Lawyer.objects.exclude(email=\"\").count()}')
+print(f'RocketReach lookups: {RocketReachLookup.objects.count()}')
+print(f'Successful lookups: {RocketReachLookup.objects.filter(status=\"found\").count()}')
 "
 ```
 
@@ -187,12 +187,21 @@ REDIS_URL=redis://redis:6379/0
 # Celery
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+# RocketReach API
+ROCKETREACH_API_KEY=your_api_key_here
 ```
 
 ## 📈 Usage
 
-### Management Commands
+### Email Discovery Workflow
 
+1. **Crawl Lawyer Data**: Use admin interface to start crawling
+2. **Email Lookup**: Select lawyers and run "Lookup emails with RocketReach"
+3. **Review Results**: Check RocketReach Lookups for discovered emails
+4. **Export Data**: Use "Download Lawyers with Emails" to export CSV
+
+### Management Commands
 
 #### Create Source Configuration
 ```bash
@@ -306,20 +315,20 @@ for lawyer in lawyers:
 lawyer-crawling-system/
 ├── apps/
 │   ├── crawler/                    # Crawling logic
-│   │   ├── models.py              # SourceConfiguration, DiscoveryURL, CrawlTemplate
+│   │   ├── models.py              # SourceConfiguration, DiscoveryURL
 │   │   ├── tasks.py               # Celery tasks for crawling
-│   │   ├── detail_tasks.py        # 2-step crawling helpers
-│   │   ├── simple_config.py       # Domain-specific configurations
+│   │   ├── admin.py               # Admin interface with CSV export
 │   │   └── management/commands/   # Management commands
 │   ├── lawyers/                    # Lawyer data models
-│   │   ├── models.py              # Lawyer model with quality scoring
-│   │   └── admin.py               # Admin interface
+│   │   ├── models.py              # Lawyer, RocketReachLookup models
+│   │   ├── admin.py               # Streamlined admin interface
+│   │   ├── rocketreach_service.py # RocketReach API integration
+│   │   └── rocketreach_tasks.py  # Email lookup tasks
 │   └── tasks/                     # Task scheduling
 ├── lawyers_project/               # Django settings
 ├── static/                        # Static files
 ├── templates/                     # HTML templates
-├── docker-compose.simple.yml     # Simple Docker setup
-├── docker-compose.yml            # Full Docker setup
+├── docker-compose.yml            # Docker setup (used in README)
 ├── Dockerfile                    # Docker image
 └── requirements.txt              # Python dependencies
 ```
@@ -345,13 +354,21 @@ lawyer-crawling-system/
 1. **Step 1**: Crawl basic lawyer information + detail URLs from listing pages
 2. **Step 2**: Crawl detailed information from individual lawyer pages
 
+### Email Discovery System
+1. **RocketReach Integration**: Professional email discovery using RocketReach API
+2. **Multiple Email Types**: Primary emails, company emails, employee contact discovery
+3. **Email Validation**: SMTP validation and confidence scoring
+4. **Batch Processing**: Celery-based asynchronous email lookup
+
 ### Domain-Specific Data
 - **LawInfo**: 31 states, 61 cities, 6 practice areas
 - **SuperLawyers**: 6 states, 4 cities per state, 6 practice areas
 
-### Data Quality Scoring
-- **Completeness Score**: Based on filled fields
-- **Quality Score**: Based on data validation (phone, email, address format)
+### Data Export Features
+- **CSV Export**: Detailed export with email information
+- **Email Breakdown**: Primary emails, company emails, employee emails
+- **Professional Context**: Title, company, LinkedIn for each email
+- **Validation Status**: Email validation and type information
 
 ## 📝 License
 
