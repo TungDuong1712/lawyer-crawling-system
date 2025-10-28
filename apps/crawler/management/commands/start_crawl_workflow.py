@@ -1,4 +1,40 @@
 """
+Management command to orchestrate crawl + RocketReach lookup flow
+"""
+
+from django.core.management.base import BaseCommand, CommandError
+from apps.crawler.models import SourceConfiguration
+from apps.crawler.tasks import orchestrate_crawl_and_lookup
+
+
+class Command(BaseCommand):
+    help = "Start end-to-end crawl and lookup workflow for a SourceConfiguration session"
+
+    def add_arguments(self, parser):
+        parser.add_argument("session_id", type=int, help="ID of SourceConfiguration session")
+        parser.add_argument(
+            "--lookup-limit", type=int, default=1000, help="Max lawyers to lookup emails for"
+        )
+
+    def handle(self, *args, **options):
+        session_id = options["session_id"]
+        lookup_limit = options["lookup_limit"]
+
+        try:
+            session = SourceConfiguration.objects.get(id=session_id)
+        except SourceConfiguration.DoesNotExist:
+            raise CommandError(f"SourceConfiguration {session_id} not found")
+
+        self.stdout.write(
+            self.style.NOTICE(
+                f"Starting orchestrated crawl+lookup for session {session_id} (lookup_limit={lookup_limit})"
+            )
+        )
+
+        result = orchestrate_crawl_and_lookup.delay(session_id, lookup_limit)
+        self.stdout.write(self.style.SUCCESS(f"Queued workflow task: {result.id}"))
+
+"""
 Django management command to start the complete lawyer crawling workflow
 Based on car crawling project experience
 """

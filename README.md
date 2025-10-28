@@ -116,6 +116,45 @@ export ROCKETREACH_API_KEY="your_api_key_here"
 # Use admin interface: Lawyers -> Select lawyers -> "Lookup emails with RocketReach"
 ```
 
+### Step 6b: Orchestrated Crawl + Lookup Flow (New)
+```bash
+# Trigger end-to-end workflow for a session (crawl listings then RocketReach lookups)
+docker compose exec web python manage.py start_crawl_workflow <SESSION_ID> --lookup-limit 1000
+
+# Example
+docker compose exec web python manage.py start_crawl_workflow 1 --lookup-limit 500
+```
+
+### Step 6c: RocketReach Web Automation (Playwright) (New)
+Requirements:
+- Set credentials via env vars: `ROCKETREACH_EMAIL`, `ROCKETREACH_PASSWORD` (or use hardcoded credentials)
+- Uses Microsoft's official Playwright Docker image for better compatibility
+
+**Note**: If you encounter font/dependency issues with the original Dockerfile, the system automatically uses `Dockerfile.playwright` which is based on Microsoft's official Playwright image.
+
+Test login first:
+```bash
+# Test login only (headed mode to see what happens)
+docker compose exec web python manage.py rocketreach_web_lookup "test" --test-login --headed
+
+# Test login in headless mode
+docker compose exec web python manage.py rocketreach_web_lookup "test" --test-login
+```
+
+Run a web lookup by keyword (opens person search and clicks "Get Contact Info"):
+```bash
+# Synchronous execution (immediate results)
+docker compose exec web python manage.py rocketreach_web_lookup "jason shaw"
+
+# Debug with visible browser
+docker compose exec web python manage.py rocketreach_web_lookup "jason shaw" --headed
+
+# Run as Celery task (async)
+docker compose exec web python manage.py rocketreach_web_lookup "jason shaw" --async
+```
+
+**Note**: If login requires MFA/captcha, check the debug screenshots saved to `/tmp/` directory.
+
 ### Step 7: Check Results
 ```bash
 # View crawled lawyers with email data

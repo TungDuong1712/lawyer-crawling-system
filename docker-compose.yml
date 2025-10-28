@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.playwright
     ports:
       - "8001:8001"
     command: python manage.py runserver 0.0.0.0:8001
@@ -49,7 +51,9 @@ services:
       - crawler-network
 
   celery:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.playwright
     command: celery -A lawyers_project worker -l info
     environment:
       - DEBUG=True
@@ -68,7 +72,9 @@ services:
       - crawler-network
 
   celery-beat:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.playwright
     command: celery -A lawyers_project beat -l info
     environment:
       - DEBUG=True

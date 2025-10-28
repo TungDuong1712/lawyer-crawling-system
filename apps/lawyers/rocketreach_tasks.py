@@ -10,6 +10,7 @@ from typing import List, Dict
 
 from .models import Lawyer, RocketReachLookup
 from .rocketreach_service import RocketReachLookupService
+from .rocketreach_web import run_sync_search
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,18 @@ def lookup_lawyer_email_task(self, lawyer_id: int, force_refresh: bool = False):
             'lawyer_id': lawyer_id,
             'error': str(e)
         }
+
+
+@shared_task(bind=True, max_retries=2)
+def web_lookup_keyword_task(self, keyword: str, headless: bool = True):
+    """Perform RocketReach web automation lookup by keyword using Playwright."""
+    try:
+        result = run_sync_search(keyword=keyword, headless=headless)
+        return result
+    except Exception as e:
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=60 * (2 ** self.request.retries))
+        return {"success": False, "error": str(e)}
 
 
 @shared_task(bind=True, max_retries=3)

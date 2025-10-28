@@ -450,6 +450,71 @@ def update_crawl_progress(session_id):
         logger.error(f"Error updating progress for session {session_id}: {e}")
 
 
+@shared_task(bind=True, max_retries=1, default_retry_delay=60)
+def orchestrate_crawl_and_lookup(self, session_id, lookup_limit=1000):
+    """End-to-end flow: crawl listings then run RocketReach lookups.
+
+    Steps:
+    1) Run crawl_session_task to discover pages and extract basic lawyer info
+    2) Trigger RocketReach lookups for lawyers without emails scoped by domain(s)
+    """
+    try:
+        session = SourceConfiguration.objects.get(id=session_id)
+        logger.info(f"Starting orchestrated crawl+lookup for session {session_id}")
+
+        # Run crawling synchronously inside this task
+        crawl_result = crawl_session_task(session_id)
+        logger.info(f"Crawl finished for session {session_id}: {crawl_result}")
+
+        # Determine domains present in this session's discovery URLs
+        domains = list(
+            session.discovery_urls.values_list('domain', flat=True).distinct()
+        )
+        if not domains:
+            # Fallback: attempt to infer from start_urls
+            inferred = []
+            for u in session.start_urls:
+                if 'lawinfo.com' in u:
+                    inferred.append('lawinfo')
+                elif 'superlawyers.com' in u:
+                    inferred.append('superlawyers')
+            domains = list(sorted(set(inferred))) or []
+
+        # Fire RocketReach lookup tasks per domain
+        from apps.lawyers.rocketreach_tasks import lookup_lawyers_without_email_task
+
+        enqueued = []
+        if domains:
+            for d in domains:
+                try:
+                    async_res = lookup_lawyers_without_email_task.delay(domain=d, limit=lookup_limit)
+                    enqueued.append({"domain": d, "task_id": async_res.id})
+                    logger.info(f"Enqueued RocketReach lookup for domain={d} (task {async_res.id})")
+                except Exception as e:
+                    logger.error(f"Failed to enqueue lookup for domain={d}: {e}")
+        else:
+            # No domain filter available; enqueue generic lookup
+            async_res = lookup_lawyers_without_email_task.delay(domain=None, limit=lookup_limit)
+            enqueued.append({"domain": None, "task_id": async_res.id})
+            logger.info(f"Enqueued RocketReach lookup without domain filter (task {async_res.id})")
+
+        summary = {
+            "success": True,
+            "session_id": session_id,
+            "crawl_result": str(crawl_result),
+            "lookup_jobs": enqueued,
+        }
+        logger.info(f"Orchestrated flow queued lookup jobs: {summary}")
+        return summary
+
+    except SourceConfiguration.DoesNotExist:
+        logger.error(f"SourceConfiguration {session_id} not found")
+        return {"success": False, "error": "session_not_found", "session_id": session_id}
+    except Exception as e:
+        logger.error(f"Orchestrated crawl+lookup failed for session {session_id}: {e}")
+        raise self.retry(exc=e)
+
+
 def crawl_single_url(crawl_task):
     """
     Crawl a single URL and extract lawyer information
