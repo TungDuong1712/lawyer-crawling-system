@@ -215,45 +215,151 @@ class SourceConfigurationAdmin(admin.ModelAdmin):
             self.message_user(request, f"Failed to clear Celery tasks: {e}", level='ERROR')
     clear_celery_tasks.short_description = "Clear Celery Tasks"
     
-    def reset_flow(self, request, queryset):
-        """Reset entire crawl flow"""
-        from apps.lawyers.models import Lawyer
+    def download_lawyers_data(self, request, queryset):
+        """Download lawyers data as CSV with RocketReach email data - Only lawyers with emails"""
+        import csv
+        from django.http import HttpResponse
+        from apps.lawyers.models import RocketReachLookup
         
-        reset_count = 0
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="lawyers_with_emails_detailed.csv"'
+        
+        writer = csv.writer(response)
+        writer.writerow([
+            'Lawyer ID', 'Lawyer Name', 'Company Name', 'Entity Type', 'Practice Area',
+            'Phone', 'Address', 'City', 'State', 'Website', 'Domain',
+            'Primary Email', 'Company Emails', 'Employee Contacts Count',
+            'RocketReach Lookup ID', 'RocketReach Status', 'RocketReach Email', 
+            'RocketReach Phone', 'LinkedIn URL', 'Current Title', 'Current Company',
+            'Lookup Date',
+            'Employee Name', 'Employee Title', 'Employee Company', 'Employee Email',
+            'Email Type', 'Email Valid'
+        ])
+        
+        total_emails = 0
+        lawyers_with_emails = 0
+        total_primary_emails = 0
+        total_company_emails = 0
+        total_employee_emails = 0
+        
         for source in queryset:
-            # Reset source configuration
-            source.status = 'PENDING'
-            source.progress_percentage = 0.0
-            source.total_urls = 0
-            source.crawled_urls = 0
-            source.success_count = 0
-            source.error_count = 0
-            source.save()
-            
-            # Reset related lawyers
-            lawyers = Lawyer.objects.filter(source_url__in=source.start_urls)
-            lawyers.update(
-                is_detail_crawled=False,
-                attorney_details='',
-                detail_url=''
+            lawyers = Lawyer.objects.filter(
+                source_url__in=source.start_urls,
+                entity_type__in=['law_firm', 'individual_attorney']
             )
-            
-            # Reset discovery URLs
-            from apps.crawler.models import DiscoveryURL
-            DiscoveryURL.objects.filter(source_config=source).update(
-                status='PENDING',
-                lawyers_found=0,
-                error_message=''
-            )
-            
-            reset_count += 1
-            self.message_user(request, f"Reset flow for {source.name}")
+            for lawyer in lawyers:
+                # Get latest RocketReach lookup
+                lookup = RocketReachLookup.objects.filter(lawyer=lawyer).order_by('-lookup_timestamp').first()
+                
+                # Only process lawyers with emails (primary email or company emails or RocketReach emails)
+                has_primary_email = bool(lawyer.email)
+                has_company_emails = bool(lawyer.company_emails and len(lawyer.company_emails) > 0)
+                has_employee_contacts = bool(lawyer.employee_contacts and len(lawyer.employee_contacts) > 0)
+                has_rocketreach_email = bool(lookup and lookup.email)
+                has_rocketreach_employee_emails = bool(lookup and lookup.employee_emails and len(lookup.employee_emails) > 0)
+                
+                if not (has_primary_email or has_company_emails or has_employee_contacts or has_rocketreach_email or has_rocketreach_employee_emails):
+                    continue
+                
+                lawyers_with_emails += 1
+                
+                # Count primary email
+                if lawyer.email:
+                    total_primary_emails += 1
+                
+                # Format company emails
+                company_emails_str = ""
+                if lawyer.company_emails:
+                    # Extract email strings from company_emails JSONField
+                    email_list = []
+                    for email_item in lawyer.company_emails:
+                        if isinstance(email_item, str):
+                            email_list.append(email_item)
+                        elif isinstance(email_item, dict):
+                            # Extract email from dict structure
+                            email = email_item.get('email', '')
+                            if email:
+                                email_list.append(email)
+                    company_emails_str = "; ".join(email_list)
+                    total_company_emails += len(email_list)
+                
+                # Format employee contacts count
+                employee_contacts_count = 0
+                if lawyer.employee_contacts:
+                    employee_contacts_count = len(lawyer.employee_contacts)
+                
+                # Base lawyer info
+                base_info = [
+                    lawyer.id,
+                    lawyer.attorney_name or '',
+                    lawyer.company_name or '',
+                    lawyer.entity_type or '',
+                    lawyer.practice_area or '',
+                    lawyer.phone or '',
+                    lawyer.address or '',
+                    lawyer.city or '',
+                    lawyer.state or '',
+                    lawyer.website or '',
+                    lawyer.domain or '',
+                    lawyer.email or '',
+                    company_emails_str,
+                    employee_contacts_count,
+                    lookup.id if lookup else '',
+                    lookup.status if lookup else 'No lookup',
+                    lookup.email if lookup else '',
+                    lookup.phone if lookup else '',
+                    lookup.linkedin_url if lookup else '',
+                    lookup.current_title if lookup else '',
+                    lookup.current_company if lookup else '',
+                    lookup.lookup_timestamp.strftime('%Y-%m-%d %H:%M:%S') if lookup and lookup.lookup_timestamp else ''
+                ]
+                
+                # If no employee emails from RocketReach, just write the base info
+                if not lookup or not lookup.employee_emails:
+                    writer.writerow(base_info + ['', '', '', '', '', ''])
+                    continue
+                
+                # Write one row for each employee email
+                for emp in lookup.employee_emails:
+                    emp_name = emp.get('name', '')
+                    emp_title = emp.get('title', '')
+                    emp_company = emp.get('company', '')
+                    actual_emails = emp.get('actual_emails', [])
+                    
+                    if actual_emails:
+                        for email_data in actual_emails:
+                            email = email_data.get('email', '')
+                            email_type = email_data.get('type', '')
+                            email_valid = email_data.get('smtp_valid', '')
+                            
+                            if email:  # Only write rows with actual emails
+                                writer.writerow(base_info + [
+                                    emp_name,
+                                    emp_title,
+                                    emp_company,
+                                    email,
+                                    email_type,
+                                    email_valid
+                                ])
+                                total_employee_emails += 1
+                    else:
+                        # Skip employees without actual emails to satisfy "only objects with email"
+                        continue
         
-        if reset_count > 0:
-            self.message_user(request, f"Reset {reset_count} crawl flows")
-        else:
-            self.message_user(request, "No sources available to reset", level='WARNING')
-    reset_flow.short_description = "Reset Flow"
+        # Calculate total emails
+        total_emails = total_primary_emails + total_company_emails + total_employee_emails
+        
+        # Add summary at the end
+        writer.writerow([])
+        writer.writerow(['SUMMARY'])
+        writer.writerow(['Lawyers with emails:', lawyers_with_emails])
+        writer.writerow(['Total emails exported:', total_emails])
+        writer.writerow(['  - Primary emails:', total_primary_emails])
+        writer.writerow(['  - Company emails:', total_company_emails])
+        writer.writerow(['  - Employee emails:', total_employee_emails])
+        
+        return response
+    download_lawyers_data.short_description = "Download Lawyers with Emails"
 
 
 @admin.register(DiscoveryURL)
@@ -288,34 +394,3 @@ class DiscoveryURLAdmin(admin.ModelAdmin):
         else:
             return "Single page"
     pagination_info.short_description = "Pagination"
-
-
-
-
-    def download_lawyers_data(self, request, queryset):
-        """Download lawyers data as CSV"""
-        import csv
-        from django.http import HttpResponse
-        
-        response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="lawyers_data.csv"'
-        
-        writer = csv.writer(response)
-        writer.writerow(['Name', 'Phone', 'Email', 'Address', 'Company', 'Practice Area', 'City', 'State'])
-        
-        for source in queryset:
-            lawyers = Lawyer.objects.filter(source_url__in=source.start_urls)
-            for lawyer in lawyers:
-                writer.writerow([
-                    lawyer.name,
-                    lawyer.phone,
-                    lawyer.email,
-                    lawyer.address,
-                    lawyer.company_name,
-                    lawyer.practice_area,
-                    lawyer.city,
-                    lawyer.state
-                ])
-        
-        return response
-    download_lawyers_data.short_description = "Download Lawyers Data"

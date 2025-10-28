@@ -330,6 +330,7 @@ class RocketReachLookup(models.Model):
         ('pending', 'Pending'),
         ('processing', 'Processing'),
         ('completed', 'Completed'),
+        ('found', 'Found'),
         ('failed', 'Failed'),
         ('not_found', 'Not Found'),
     ]
