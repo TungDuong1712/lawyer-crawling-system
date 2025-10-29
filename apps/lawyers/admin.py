@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.db import models
 from django.forms import Textarea
-from .models import Lawyer, RocketReachLookup
+from .models import Lawyer, RocketReachLookup, RocketReachContact
 from .rocketreach_tasks import lookup_lawyer_email_task
 
 
@@ -249,3 +249,239 @@ class RocketReachLookupAdmin(admin.ModelAdmin):
         self.message_user(request, f"Exported {count} employee emails to CSV")
         return response
     export_employee_emails.short_description = "Export employee emails to CSV"
+
+
+@admin.register(RocketReachContact)
+class RocketReachContactAdmin(admin.ModelAdmin):
+    list_display = ['name', 'company', 'get_title_from_work_experience', 'primary_email', 'contact_grade', 'location']
+    list_filter = ['contact_grade', 'status', 'is_verified', 'company', 'location']
+    search_fields = ['name', 'company', 'primary_email', 'secondary_email', 'location']
+    readonly_fields = ['work_experience_display', 'education_display', 'skills_display']
+    list_per_page = 50
+    
+    # Compact large text/json fields
+    formfield_overrides = {
+        models.TextField: {'widget': Textarea(attrs={'rows': 3})},
+        models.JSONField: {'widget': Textarea(attrs={'rows': 6})},
+    }
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'company', 'location')
+        }),
+        ('Contact Information', {
+            'fields': ('primary_email', 'secondary_email', 'contact_grade', 'phone')
+        }),
+        ('Social Media & Profile', {
+            'fields': ('linkedin_url', 'twitter_url', 'profile_photo')
+        }),
+        ('Professional Details', {
+            'fields': ('work_experience_display', 'education_display', 'skills_display'),
+            'description': 'Professional experience, education, and skills'
+        }),
+        ('Crawling Information', {
+            'fields': ('source_url', 'page_number', 'position_on_page', 'profile_id'),
+            'description': 'Information about where this contact was crawled'
+        }),
+    )
+    
+    actions = ['export_contacts_csv', 'mark_as_verified']
+    
+    def get_title_from_work_experience(self, obj):
+        """Get title from first work experience entry"""
+        if not obj.work_experience:
+            return "N/A"
+        
+        try:
+            import json
+            if isinstance(obj.work_experience, str):
+                work_exp_data = json.loads(obj.work_experience)
+            else:
+                work_exp_data = obj.work_experience
+            
+            if work_exp_data and len(work_exp_data) > 0:
+                first_exp = work_exp_data[0]
+                if isinstance(first_exp, dict):
+                    return first_exp.get('title', 'N/A')
+                else:
+                    # If it's a string, try to extract title
+                    # Format: "Title @ Company" or just "Title"
+                    if ' @ ' in first_exp:
+                        return first_exp.split(' @ ')[0]
+                    else:
+                        return first_exp
+            return "N/A"
+        except Exception as e:
+            return "N/A"
+    get_title_from_work_experience.short_description = 'Title'
+    get_title_from_work_experience.admin_order_field = 'work_experience'
+    
+    def work_experience_display(self, obj):
+        """Display work experience in a formatted way"""
+        if not obj.work_experience:
+            return "No work experience found"
+        
+        try:
+            # Parse JSON if it's a string
+            import json
+            if isinstance(obj.work_experience, str):
+                work_exp_data = json.loads(obj.work_experience)
+            else:
+                work_exp_data = obj.work_experience
+            
+            summary = []
+            summary.append("=" * 80)
+            summary.append("💼 WORK EXPERIENCE")
+            summary.append("=" * 80)
+            
+            for i, exp in enumerate(work_exp_data[:10]):  # Show first 10
+                if isinstance(exp, dict):
+                    # If it's a dictionary, extract fields
+                    title = exp.get('title', 'N/A')
+                    company = exp.get('company', 'N/A')
+                    duration = exp.get('duration', 'N/A')
+                    description = exp.get('description', '')
+                    
+                    summary.append(f"\n{i+1}. {title} at {company}")
+                    summary.append(f"   Duration: {duration}")
+                    if description:
+                        summary.append(f"   Description: {description}")
+                else:
+                    # If it's a string, display as is
+                    summary.append(f"\n{i+1}. {exp}")
+                
+                summary.append("-" * 60)
+            
+            if len(work_exp_data) > 10:
+                summary.append(f"\n... and {len(work_exp_data) - 10} more experiences")
+            
+            return "\n".join(summary)
+        except Exception as e:
+            return f"Error displaying work experience: {str(e)}"
+    work_experience_display.short_description = 'Work Experience Details'
+    
+    def education_display(self, obj):
+        """Display education in a formatted way"""
+        if not obj.education:
+            return "No education found"
+        
+        try:
+            # Parse JSON if it's a string
+            import json
+            if isinstance(obj.education, str):
+                edu_data = json.loads(obj.education)
+            else:
+                edu_data = obj.education
+            
+            summary = []
+            summary.append("=" * 80)
+            summary.append("🎓 EDUCATION")
+            summary.append("=" * 80)
+            
+            for i, edu in enumerate(edu_data[:10]):  # Show first 10
+                if isinstance(edu, dict):
+                    # If it's a dictionary, extract fields
+                    degree = edu.get('degree', 'N/A')
+                    school = edu.get('school', 'N/A')
+                    year = edu.get('year', 'N/A')
+                    field = edu.get('field', '')
+                    
+                    summary.append(f"\n{i+1}. {degree}")
+                    summary.append(f"   School: {school}")
+                    summary.append(f"   Year: {year}")
+                    if field:
+                        summary.append(f"   Field: {field}")
+                else:
+                    # If it's a string, display as is
+                    summary.append(f"\n{i+1}. {edu}")
+                
+                summary.append("-" * 60)
+            
+            if len(edu_data) > 10:
+                summary.append(f"\n... and {len(edu_data) - 10} more education entries")
+            
+            return "\n".join(summary)
+        except Exception as e:
+            return f"Error displaying education: {str(e)}"
+    education_display.short_description = 'Education Details'
+    
+    def skills_display(self, obj):
+        """Display skills in a formatted way"""
+        if not obj.skills:
+            return "No skills found"
+        
+        try:
+            # Split skills by common delimiters and format nicely
+            skills_list = obj.skills.replace(',', '\n').replace(';', '\n').split('\n')
+            skills_list = [skill.strip() for skill in skills_list if skill.strip()]
+            
+            if not skills_list:
+                return "No skills found"
+            
+            summary = []
+            summary.append("=" * 80)
+            summary.append("🛠️ SKILLS")
+            summary.append("=" * 80)
+            
+            # Display skills in columns
+            for i in range(0, len(skills_list), 3):
+                row_skills = skills_list[i:i+3]
+                summary.append(" | ".join(f"{skill:<25}" for skill in row_skills))
+            
+            return "\n".join(summary)
+        except Exception as e:
+            return f"Error displaying skills: {str(e)}"
+    skills_display.short_description = 'Skills Details'
+    
+    def export_contacts_csv(self, request, queryset):
+        """Export contacts to CSV"""
+        import csv
+        import io
+        from django.http import HttpResponse
+        
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="rocketreach_contacts_export.csv"'
+        
+        writer = csv.writer(response)
+        writer.writerow([
+            'ID', 'Name', 'Company', 'Primary Email', 'Secondary Email', 
+            'Contact Grade', 'Phone', 'Location', 'LinkedIn URL', 'Twitter URL',
+            'Profile Photo', 'Work Experience Count', 'Education Count',
+            'Skills', 'Status', 'Is Verified', 'Source URL'
+        ])
+        
+        count = 0
+        for contact in queryset:
+            work_exp_count = len(contact.work_experience) if contact.work_experience else 0
+            edu_count = len(contact.education) if contact.education else 0
+            
+            writer.writerow([
+                contact.id,
+                contact.name,
+                contact.company,
+                contact.primary_email,
+                contact.secondary_email,
+                contact.contact_grade,
+                contact.phone,
+                contact.location,
+                contact.linkedin_url,
+                contact.twitter_url,
+                contact.profile_photo,
+                work_exp_count,
+                edu_count,
+                contact.skills[:500] if contact.skills else '',  # Limit skills length
+                contact.status,
+                contact.is_verified,
+                contact.source_url
+            ])
+            count += 1
+        
+        self.message_user(request, f"Exported {count} contacts to CSV")
+        return response
+    export_contacts_csv.short_description = "Export contacts to CSV"
+    
+    def mark_as_verified(self, request, queryset):
+        """Mark selected contacts as verified (placeholder for future functionality)"""
+        count = queryset.count()
+        self.message_user(request, f"Marked {count} contacts as verified (placeholder action)")
+    mark_as_verified.short_description = "Mark as verified"

@@ -9,8 +9,8 @@ import os
 from typing import List, Dict
 
 from .models import Lawyer, RocketReachLookup
-from .rocketreach_service import RocketReachLookupService
-from .rocketreach_web import run_sync_search
+from .rocketreach_api_service import RocketReachLookupService
+from .rocketreach_web_crawler import run_rocketreach_keyword_search
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def lookup_lawyer_email_task(self, lawyer_id: int, force_refresh: bool = False):
 def web_lookup_keyword_task(self, keyword: str, headless: bool = True):
     """Perform RocketReach web automation lookup by keyword using Playwright."""
     try:
-        result = run_sync_search(keyword=keyword, headless=headless)
+        result = run_rocketreach_keyword_search(keyword=keyword, headless=headless)
         return result
     except Exception as e:
         if self.request.retries < self.max_retries:
@@ -319,4 +319,210 @@ def cleanup_failed_lookups_task(self, days_old: int = 7):
         return {
             'success': False,
             'error': str(e)
+        }
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def crawl_rocketreach_web_task(self, base_url: str, max_pages: int = 10, headless: bool = True):
+    """
+    Celery task to crawl RocketReach web interface with pagination
+    
+    Args:
+        base_url: RocketReach search URL
+        max_pages: Maximum number of pages to crawl
+        headless: Run browser in headless mode
+        
+    Returns:
+        Dict with crawling results
+    """
+    try:
+        logger.info(f"Starting RocketReach web crawl task for: {base_url}")
+        
+        # Run the web crawler
+        result = run_rocketreach_web_crawl(
+            base_url=base_url,
+            headless=headless,
+            max_pages=max_pages
+        )
+        
+        if result['success']:
+            logger.info(
+                f"Web crawling completed: {result['total_contacts']} contacts found, "
+                f"{result['saved_contacts']} saved to DB"
+            )
+        else:
+            logger.error(f"Web crawling failed: {result.get('error', 'Unknown error')}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"RocketReach web crawl task failed: {e}")
+        
+        # Retry logic
+        if self.request.retries < self.max_retries:
+            logger.info(f"Retrying task (attempt {self.request.retries + 1}/{self.max_retries})")
+            raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
+        else:
+            logger.error(f"Task failed after {self.max_retries} retries")
+            return {
+                'success': False,
+                'error': f'Task failed after {self.max_retries} retries: {str(e)}',
+                'contacts': []
+            }
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=300)
+def search_rocketreach_keyword_task(self, keyword: str, headless: bool = True):
+    """
+    Celery task to search RocketReach by keyword and get contact info
+    
+    Args:
+        keyword: Search keyword
+        headless: Run browser in headless mode
+        
+    Returns:
+        Dict with search results
+    """
+    try:
+        logger.info(f"Starting RocketReach keyword search task for: {keyword}")
+        
+        # Run the keyword search
+        result = run_rocketreach_keyword_search(
+            keyword=keyword,
+            headless=headless
+        )
+        
+        if result['success']:
+            emails = result.get('emails', [])
+            logger.info(f"Keyword search completed: {len(emails)} emails found for '{keyword}'")
+        else:
+            logger.error(f"Keyword search failed: {result.get('error', 'Unknown error')}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"RocketReach keyword search task failed: {e}")
+        
+        # Retry logic
+        if self.request.retries < self.max_retries:
+            logger.info(f"Retrying task (attempt {self.request.retries + 1}/{self.max_retries})")
+            raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
+        else:
+            logger.error(f"Task failed after {self.max_retries} retries")
+            return {
+                'success': False,
+                'error': f'Task failed after {self.max_retries} retries: {str(e)}',
+                'emails': []
+            }
+
+
+@shared_task
+def crawl_law_industry_contacts(max_pages: int = 20, headless: bool = True):
+    """
+    Convenience task to crawl law industry contacts from RocketReach
+    
+    Args:
+        max_pages: Maximum number of pages to crawl
+        headless: Run browser in headless mode
+        
+    Returns:
+        Dict with crawling results
+    """
+    base_url = "https://rocketreach.co/person?company_industry%5B%5D=Law+Firms+%26+Legal+Services&start=1&pageSize=20"
+    
+    return crawl_rocketreach_web_task.delay(
+        base_url=base_url,
+        max_pages=max_pages,
+        headless=headless
+    )
+
+
+@shared_task
+def crawl_contacts_by_keyword(keyword: str, max_pages: int = 10, headless: bool = True):
+    """
+    Crawl contacts by keyword search
+    
+    Args:
+        keyword: Search keyword
+        max_pages: Maximum number of pages to crawl
+        headless: Run browser in headless mode
+        
+    Returns:
+        Dict with crawling results
+    """
+    from urllib.parse import quote
+    
+    base_url = f"https://rocketreach.co/person?keyword={quote(keyword)}&start=1&pageSize=20"
+    
+    return crawl_rocketreach_web_task.delay(
+        base_url=base_url,
+        max_pages=max_pages,
+        headless=headless
+    )
+
+
+@shared_task
+def bulk_crawl_rocketreach_urls(urls: List[str], max_pages: int = 5, headless: bool = True):
+    """
+    Bulk crawl multiple RocketReach URLs
+    
+    Args:
+        urls: List of RocketReach search URLs
+        max_pages: Maximum number of pages per URL
+        headless: Run browser in headless mode
+        
+    Returns:
+        Dict with bulk crawling results
+    """
+    try:
+        results = []
+        total_contacts = 0
+        total_saved = 0
+        
+        for i, url in enumerate(urls):
+            try:
+                logger.info(f"Processing URL {i+1}/{len(urls)}: {url}")
+                
+                result = run_rocketreach_web_crawl(
+                    base_url=url,
+                    headless=headless,
+                    max_pages=max_pages
+                )
+                
+                results.append({
+                    'url': url,
+                    'success': result['success'],
+                    'contacts_found': result.get('total_contacts', 0),
+                    'contacts_saved': result.get('saved_contacts', 0),
+                    'error': result.get('error') if not result['success'] else None
+                })
+                
+                if result['success']:
+                    total_contacts += result.get('total_contacts', 0)
+                    total_saved += result.get('saved_contacts', 0)
+                
+            except Exception as e:
+                logger.error(f"Error processing URL {url}: {e}")
+                results.append({
+                    'url': url,
+                    'success': False,
+                    'contacts_found': 0,
+                    'contacts_saved': 0,
+                    'error': str(e)
+                })
+        
+        return {
+            'success': True,
+            'total_urls': len(urls),
+            'total_contacts_found': total_contacts,
+            'total_contacts_saved': total_saved,
+            'results': results
+        }
+        
+    except Exception as e:
+        logger.error(f"Bulk crawl failed: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'results': []
         }

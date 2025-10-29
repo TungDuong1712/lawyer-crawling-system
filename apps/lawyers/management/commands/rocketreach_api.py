@@ -4,14 +4,14 @@ Management command to run RocketReach web automation lookup.
 
 from django.core.management.base import BaseCommand, CommandError
 from apps.lawyers.rocketreach_tasks import web_lookup_keyword_task
-from apps.lawyers.rocketreach_web import run_sync_search, run_manual_search
+from apps.lawyers.rocketreach_web_crawler import run_rocketreach_keyword_search
 
 
 class Command(BaseCommand):
     help = "Run RocketReach web lookup by keyword (uses Playwright)."
 
     def add_arguments(self, parser):
-        parser.add_argument('keyword', type=str, help='Search keyword, e.g. "jason shaw"')
+        parser.add_argument('keyword', type=str, help='Search keyword, e.g. "jayson shaw"')
         parser.add_argument('--headed', action='store_true', help='Run browser in headed mode for debugging')
         parser.add_argument('--async', action='store_true', help='Run as Celery task (default: sync)')
         parser.add_argument('--test-login', action='store_true', help='Test login only (no search)')
@@ -27,13 +27,12 @@ class Command(BaseCommand):
         if test_login:
             self.stdout.write(self.style.NOTICE("Testing RocketReach login..."))
             try:
-                from apps.lawyers.rocketreach_web import RocketReachWebClient
+                from apps.lawyers.rocketreach_web_crawler import RocketReachWebCrawler
                 import asyncio
                 
                 async def test_login():
-                    async with RocketReachWebClient(headless=headless) as client:
-                        await client.login()
-                        return True
+                    async with RocketReachWebCrawler(headless=headless) as client:
+                        return await client.login()
                 
                 result = asyncio.get_event_loop().run_until_complete(test_login())
                 if result:
@@ -48,7 +47,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.NOTICE("Opening browser for manual reCAPTCHA solving..."))
             self.stdout.write(self.style.WARNING("Please solve the reCAPTCHA manually and the script will continue automatically."))
             try:
-                result = run_manual_search(keyword=keyword)
+                result = run_rocketreach_keyword_search(keyword=keyword, headless=False)
                 if result.get('success'):
                     emails = result.get('emails', [])
                     self.stdout.write(self.style.SUCCESS(f"Found {len(emails)} emails: {emails}"))
@@ -65,7 +64,7 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.NOTICE(f"Running web lookup for keyword: {keyword}"))
             try:
-                result = run_sync_search(keyword=keyword, headless=headless)
+                result = run_rocketreach_keyword_search(keyword=keyword, headless=headless)
                 if result.get('success'):
                     emails = result.get('emails', [])
                     self.stdout.write(self.style.SUCCESS(f"Found {len(emails)} emails: {emails}"))

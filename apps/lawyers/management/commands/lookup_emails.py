@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
 from django.db import models
 from apps.lawyers.models import Lawyer, RocketReachLookup
-from apps.lawyers.rocketreach_service import RocketReachLookupService
+from apps.lawyers.rocketreach_api_service import RocketReachLookupService
 from apps.lawyers.rocketreach_tasks import (
     lookup_lawyer_email_task,
     bulk_lookup_lawyers_task,

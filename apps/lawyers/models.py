@@ -435,5 +435,124 @@ class RocketReachLookup(models.Model):
         return False
 
 
+class RocketReachContact(models.Model):
+    """Model to store contact information from RocketReach pagination crawling"""
+
+    # Primary contact information
+    email = models.EmailField(unique=True, help_text="Primary email address")
+    name = models.CharField(max_length=200, blank=True, help_text="Full name")
+    company = models.CharField(max_length=300, blank=True, help_text="Company name")
+    title = models.CharField(max_length=200, blank=True, help_text="Job title")
+
+    # Contact details
+    phone = models.CharField(max_length=50, blank=True, help_text="Phone number")
+    linkedin_url = models.URLField(blank=True, help_text="LinkedIn profile URL")
+    twitter_url = models.URLField(blank=True, help_text="X/Twitter profile URL")
+    location = models.CharField(max_length=200, blank=True, help_text="Location")
+    profile_photo = models.URLField(blank=True, help_text="Profile photo URL")
+
+    # Email information
+    primary_email = models.EmailField(blank=True, help_text="Primary email address")
+    secondary_email = models.EmailField(blank=True, help_text="Secondary email address")
+    contact_grade = models.CharField(max_length=10, blank=True, help_text="Contact quality grade (A, B, C, etc.)")
+
+    # Professional information
+    industry = models.CharField(max_length=100, blank=True, help_text="Industry")
+    company_size = models.CharField(max_length=50, blank=True, help_text="Company size")
+    experience_years = models.IntegerField(null=True, blank=True, help_text="Years of experience")
+    work_experience = models.JSONField(default=list, blank=True, help_text="Work experience history")
+    education = models.JSONField(default=list, blank=True, help_text="Education history")
+    skills = models.TextField(blank=True, help_text="Skills and expertise")
+
+    # Crawling metadata
+    source_url = models.URLField(help_text="RocketReach source URL")
+    page_number = models.IntegerField(default=1, help_text="Page number where found")
+    position_on_page = models.IntegerField(default=1, help_text="Position on the page")
+    profile_id = models.CharField(max_length=50, blank=True, help_text="RocketReach profile ID")
+
+    # Status and validation
+    is_verified = models.BooleanField(default=False, help_text="Email verification status")
+    confidence_score = models.FloatField(default=0.0, help_text="Confidence score (0-1)")
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ('active', 'Active'),
+            ('bounced', 'Bounced'),
+            ('invalid', 'Invalid'),
+            ('unknown', 'Unknown'),
+        ],
+        default='unknown'
+    )
+
+    # Additional data
+    raw_data = models.JSONField(default=dict, blank=True, help_text="Raw scraped data")
+    notes = models.TextField(blank=True, help_text="Additional notes")
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_verified = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['email']),
+            models.Index(fields=['company']),
+            models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.name} ({self.email}) - {self.company}"
+    
+    def get_contact_summary(self):
+        """Get summary of contact information"""
+        return {
+            'email': self.email,
+            'name': self.name,
+            'company': self.company,
+            'title': self.title,
+            'phone': self.phone,
+            'location': self.location,
+            'status': self.status,
+            'confidence': self.confidence_score,
+            'verified': self.is_verified
+        }
+    
+    def get_email_confidence(self):
+        """Get email confidence level"""
+        if not self.email:
+            return "No email found"
+        
+        if self.confidence_score >= 90:
+            return "High confidence"
+        elif self.confidence_score >= 70:
+            return "Medium confidence"
+        else:
+            return "Low confidence"
+    
+    def is_successful(self):
+        """Check if lookup was successful"""
+        return self.status == 'completed' and bool(self.email)
+    
+    def get_social_profiles(self):
+        """Get all social media profiles"""
+        profiles = {}
+        if self.linkedin_url:
+            profiles['linkedin'] = self.linkedin_url
+        if self.twitter_url:
+            profiles['twitter'] = self.twitter_url
+        if self.facebook_url:
+            profiles['facebook'] = self.facebook_url
+        return profiles
+    
+    def update_lawyer_email(self):
+        """Update the related lawyer's email if found"""
+        if self.is_successful() and self.email:
+            self.lawyer.email = self.email
+            self.lawyer.save(update_fields=['email'])
+            return True
+        return False
+
 
 

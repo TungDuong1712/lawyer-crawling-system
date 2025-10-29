@@ -135,22 +135,22 @@ Requirements:
 Test login first:
 ```bash
 # Test login only (headed mode to see what happens)
-docker compose exec web python manage.py rocketreach_web_lookup "test" --test-login --headed
+docker compose exec web python manage.py rocketreach_api "test" --test-login --headed
 
 # Test login in headless mode
-docker compose exec web python manage.py rocketreach_web_lookup "test" --test-login
+docker compose exec web python manage.py rocketreach_api "test" --test-login
 ```
 
 Run a web lookup by keyword (opens person search and clicks "Get Contact Info"):
 ```bash
 # Synchronous execution (immediate results)
-docker compose exec web python manage.py rocketreach_web_lookup "jason shaw"
+docker compose exec web python manage.py rocketreach_api "jayson shaw"
 
 # Debug with visible browser
-docker compose exec web python manage.py rocketreach_web_lookup "jason shaw" --headed
+docker compose exec web python manage.py rocketreach_api "jayson shaw" --headed
 
 # Run as Celery task (async)
-docker compose exec web python manage.py rocketreach_web_lookup "jason shaw" --async
+docker compose exec web python manage.py rocketreach_api "jayson shaw" --async
 ```
 
 **Note**: If login requires MFA/captcha, check the debug screenshots saved to `/tmp/` directory.
@@ -306,6 +306,36 @@ docker compose exec web python manage.py start_crawl_workflow \
   --limit 10
 ```
 
+### RocketReach Playwright Crawl (Pagination) – New Commands
+
+Run web crawl against RocketReach with pagination and page-size control.
+
+```bash
+# Basic crawl (headless)
+docker compose exec web python manage.py rocketreach_web crawl \
+  --url "https://rocketreach.co/company?domain=law&start=1&pageSize=10" \
+  --start-page 1 --num-pages 1 --page-size 10 --timeout 60 --headless
+
+# Crawl a later page and only 1 page, overriding page size
+docker compose exec web python manage.py rocketreach_web crawl \
+  --url "https://rocketreach.co/company?domain=law&start=1&pageSize=10" \
+  --start-page 10 --num-pages 1 --page-size 1 --timeout 90 --headless
+```
+
+Diagnostics after crawl (HTML analysis) – prints MAILTO_COUNT, HAS_GET_CONTACT, CARDS, SAMPLE_CARD_ID using the saved snapshots:
+
+```bash
+docker compose exec web python manage.py rocketreach_web crawl \
+  --url "https://rocketreach.co/company?domain=law&start=1&pageSize=10" \
+  --start-page 10 --num-pages 1 --page-size 1 --timeout 90 --headless \
+  --debug-analyze-snapshots
+```
+
+This flag reads the latest saved snapshot (e.g., `rocketreach_employees_page.html`) from the project root and prints:
+- MAILTO_COUNT and up to 10 `mailto:` links
+- HAS_GET_CONTACT (presence of "Get Contact Info")
+- CARDS count and a SAMPLE_CARD_ID
+
 ### Test Data Quality
 ```bash
 # Check data quality scores
@@ -361,7 +391,7 @@ lawyer-crawling-system/
 │   ├── lawyers/                    # Lawyer data models
 │   │   ├── models.py              # Lawyer, RocketReachLookup models
 │   │   ├── admin.py               # Streamlined admin interface
-│   │   ├── rocketreach_service.py # RocketReach API integration
+│   │   ├── rocketreach_api_service.py # RocketReach API integration
 │   │   └── rocketreach_tasks.py  # Email lookup tasks
 │   └── tasks/                     # Task scheduling
 ├── lawyers_project/               # Django settings
