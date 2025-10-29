@@ -830,13 +830,20 @@ class RocketReachWebCrawler:
 
                     # Iterate each company on the current page
                     company_index = 0
+                    processed_companies = set()  # Track processed company IDs
                     while company_index < buttons_count:
                         # Refetch buttons each loop (DOM may change after back navigation)
                         buttons = await self.page.query_selector_all('button[data-px-single-search-employees="true"]')
                         if company_index >= len(buttons):
                             logger.warning(f'Company index {company_index} exceeds available buttons {len(buttons)}, stopping')
                             break
+                        
+                        # Skip if button is not clickable
                         btn = buttons[company_index]
+                        if not (await btn.is_visible()) or not (await btn.is_enabled()):
+                            logger.warning(f'Button {company_index+1} not clickable, skipping to next')
+                            company_index += 1
+                            continue
 
                         # Extract info for logging
                         try:
@@ -865,6 +872,17 @@ class RocketReachWebCrawler:
                             }''')
                         except Exception:
                             info = { 'id': '', 'name': 'Unknown Company' }
+                        
+                        # Check if this company has already been processed
+                        company_id = info.get('id', '')
+                        if company_id and company_id in processed_companies:
+                            logger.warning(f'Company {company_id} already processed, skipping to next')
+                            company_index += 1
+                            continue
+                        
+                        # Mark this company as processed
+                        if company_id:
+                            processed_companies.add(company_id)
 
                         logger.warning(f'=== COMPANY {company_index+1}/{buttons_count} ===')
                         logger.warning(f'Company ID: {info.get("id", "?")}')
@@ -886,24 +904,49 @@ class RocketReachWebCrawler:
                             logger.warning('Target button not clickable, skipping company')
                             continue
 
-                        await btn.click()
-                        logger.warning('✅ Clicked "Search Employees"')
-
                         # Wait for navigation to employees (reduced timeout)
                         try:
+                            # Wait for navigation with a promise to capture the new URL
                             await self.page.wait_for_function("() => location.pathname.includes('/person')", timeout=8000)
                         except Exception:
                             logger.debug('Employees URL detection by pathname failed; relying on networkidle')
+                        
+                        # Click the button
+                        await btn.click()
+                        logger.warning('✅ Clicked "Search Employees"')
+                        
+                        # Wait for navigation to complete
                         await self.page.wait_for_load_state('domcontentloaded')  # Faster than networkidle
+                        
+                        # Log the actual URL after navigation
+                        current_url = self.page.url
+                        logger.warning(f'Current URL after click: {current_url}')
+                        
+                        # Check if URL contains company-specific parameters
+                        if 'employer' not in current_url and 'company' not in current_url:
+                            logger.warning('⚠️ URL does not contain company-specific parameters - button may not be working correctly')
+                            # Try to manually construct the URL with company ID
+                            if company_id:
+                                manual_url = f"https://rocketreach.co/person?employer%5B%5D=%22{company_id}%3A{info.get('name', 'Unknown').replace(' ', '+')}%22&start=1&pageSize=100"
+                                logger.warning(f'Attempting manual navigation to: {manual_url}')
+                                await self.page.goto(manual_url)
+                                await self.page.wait_for_load_state('domcontentloaded')
+                                current_url = self.page.url
+                                logger.warning(f'Manual URL result: {current_url}')
+                        
                         # Skip snapshot for performance
 
-                        # Rewrite to single-page employees with pageSize=100
+                        # Rewrite to single-page employees with pageSize=100, preserving company-specific parameters
                         switched_url = self.page.url
                         try:
                             p = urlparse(switched_url)
                             q = parse_qs(p.query)
+                            
+                            # Preserve all existing parameters, only modify pageSize and start
                             q['pageSize'] = [str(100)]
                             q['start'] = ['1']
+                            
+                            # Keep all other parameters (especially employer[] for company-specific search)
                             new_query = urlencode(q, doseq=True)
                             employees_url = f"{p.scheme}://{p.netloc}{p.path}?{new_query}"
                             logger.warning(f'Switched to employees URL (single page): {employees_url}')
@@ -936,6 +979,9 @@ class RocketReachWebCrawler:
                                 try:
                                     await self.page.goto(base_url, timeout=90000)  # 90s timeout
                                     await self.page.wait_for_load_state('domcontentloaded', timeout=30000)
+                                    
+                                    # Wait for buttons to be available again
+                                    await self.page.wait_for_selector('button[data-px-single-search-employees="true"]', timeout=10000)
                                     break
                                 except Exception as retry_e:
                                     if retry == 2:
@@ -949,6 +995,9 @@ class RocketReachWebCrawler:
                             # Debug: check if buttons are still available
                             current_buttons = await self.page.query_selector_all('button[data-px-single-search-employees="true"]')
                             logger.warning(f'After return: found {len(current_buttons)} buttons (was {buttons_count})')
+                            
+                            # Update buttons_count in case it changed
+                            buttons_count = len(current_buttons)
                         except Exception as e:
                             logger.warning(f'Failed to go back to company page after retries: {e}')
                             break
