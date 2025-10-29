@@ -253,8 +253,8 @@ class RocketReachLookupAdmin(admin.ModelAdmin):
 
 @admin.register(RocketReachContact)
 class RocketReachContactAdmin(admin.ModelAdmin):
-    list_display = ['name', 'company', 'get_title_from_work_experience', 'primary_email', 'contact_grade', 'location']
-    list_filter = ['contact_grade', 'status', 'is_verified', 'company', 'location']
+    list_display = ['name', 'company', 'get_title_from_work_experience', 'title_category', 'primary_email', 'contact_grade', 'location']
+    list_filter = ['title_category', 'contact_grade', 'status', 'is_verified', 'company', 'location']
     search_fields = ['name', 'company', 'primary_email', 'secondary_email', 'location']
     readonly_fields = ['work_experience_display', 'education_display', 'skills_display']
     list_per_page = 50

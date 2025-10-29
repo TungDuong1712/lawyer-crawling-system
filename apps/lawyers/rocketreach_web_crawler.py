@@ -1549,11 +1549,16 @@ class RocketReachWebCrawler:
                     continue
                 
                 # Create new contact
+                # Normalize title category
+                from apps.lawyers.models import RocketReachContact as RRCModel
+                title_category = RRCModel.normalize_title_to_category(contact['title'])
+
                 await sync_to_async(RocketReachContact.objects.create)(
                     email=contact['email'],
                     name=contact['name'],
                     company=contact['company'],
                     title=contact['title'],
+                    title_category=title_category,
                     phone=contact['phone'],
                     location=contact['location'],
                     profile_photo=contact['profile_photo'],

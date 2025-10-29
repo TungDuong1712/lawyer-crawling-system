@@ -443,6 +443,8 @@ class RocketReachContact(models.Model):
     name = models.CharField(max_length=200, blank=True, help_text="Full name")
     company = models.CharField(max_length=300, blank=True, help_text="Company name")
     title = models.CharField(max_length=200, blank=True, help_text="Job title")
+    # Normalized title category (derived from title)
+    title_category = models.CharField(max_length=50, blank=True, db_index=True, help_text="Normalized title category")
 
     # Contact details
     phone = models.CharField(max_length=50, blank=True, help_text="Phone number")
@@ -500,6 +502,7 @@ class RocketReachContact(models.Model):
             models.Index(fields=['company']),
             models.Index(fields=['status']),
             models.Index(fields=['created_at']),
+            models.Index(fields=['title_category']),
         ]
     
     def __str__(self):
@@ -553,6 +556,64 @@ class RocketReachContact(models.Model):
             self.lawyer.save(update_fields=['email'])
             return True
         return False
+
+    @staticmethod
+    def normalize_title_to_category(title: str) -> str:
+        """Map arbitrary titles into a compact normalized category string.
+
+        Categories:
+        - attorney
+        - counsel
+        - partner
+        - director_manager
+        - coordinator_assistant
+        - paralegal
+        - executive
+        - associate_analyst
+        - consultant
+        - intern
+        - academic
+        - operations
+        - other
+        """
+        if not title:
+            return 'other'
+
+        t = title.strip().lower()
+
+        # Quick keyword lists
+        if any(k in t for k in ['attorney', 'trial attorney', 'staff attorney']):
+            return 'attorney'
+        if any(k in t for k in ['of counsel', 'general counsel', 'counsel']):
+            return 'counsel'
+        if any(k in t for k in ['partner', 'shareholder']):
+            return 'partner'
+        if any(k in t for k in ['director', 'manager', 'managing director', 'practice director', 'operations director']):
+            return 'director_manager'
+        if any(k in t for k in ['paralegal']):
+            return 'paralegal'
+        if any(k in t for k in ['coordinator', 'assistant', 'secretary']):
+            return 'coordinator_assistant'
+        if any(k in t for k in ['ceo', 'coo', 'cfo', 'president', 'vice president', 'vp ', 'head of']):
+            return 'executive'
+        if any(k in t for k in ['associate', 'analyst', 'research associate', 'legal associate']):
+            return 'associate_analyst'
+        if any(k in t for k in ['consultant', 'advisor']):
+            return 'consultant'
+        if any(k in t for k in ['intern', 'trainee', 'summer associate']):
+            return 'intern'
+        if any(k in t for k in ['professor', 'lecturer', 'researcher', 'dean']):
+            return 'academic'
+        if any(k in t for k in ['office manager', 'administrator', 'hr', 'recruiting', 'marketing']):
+            return 'operations'
+
+        return 'other'
+
+    def save(self, *args, **kwargs):
+        # Auto-fill title_category if missing or title changed
+        if self.title and not self.title_category:
+            self.title_category = self.normalize_title_to_category(self.title)
+        super().save(*args, **kwargs)
 
 
 
