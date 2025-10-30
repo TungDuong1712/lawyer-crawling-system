@@ -313,12 +313,12 @@ Run web crawl against RocketReach with pagination and page-size control.
 ```bash
 # Basic crawl (headless)
 docker compose exec web python manage.py rocketreach_web crawl \
-  --url "https://rocketreach.co/company?domain=law&start=1&pageSize=10" \
+  --url "https://rocketreach.co/company?geo%5B%5D=US+>+States&domain=law&start=1&pageSize=10" \
   --start-page 1 --num-pages 1 --page-size 10 --timeout 60 --headless
 
 # Crawl a later page and only 1 page, overriding page size
 docker compose exec web python manage.py rocketreach_web crawl \
-  --url "https://rocketreach.co/company?domain=law&start=1&pageSize=10" \
+  --url "https://rocketreach.co/company?geo%5B%5D=US+>+States&domain=law&start=1&pageSize=10" \
   --start-page 10 --num-pages 1 --page-size 1 --timeout 90 --headless
 ```
 
@@ -326,7 +326,7 @@ Diagnostics after crawl (HTML analysis) – prints MAILTO_COUNT, HAS_GET_CONTACT
 
 ```bash
 docker compose exec web python manage.py rocketreach_web crawl \
-  --url "https://rocketreach.co/company?domain=law&start=1&pageSize=10" \
+  --url "https://rocketreach.co/company?geo%5B%5D=US+>+States&domain=law&start=1&pageSize=10" \
   --start-page 10 --num-pages 1 --page-size 1 --timeout 90 --headless \
   --debug-analyze-snapshots
 ```

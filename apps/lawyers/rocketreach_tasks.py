@@ -323,7 +323,16 @@ def cleanup_failed_lookups_task(self, days_old: int = 7):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
-def crawl_rocketreach_web_task(self, base_url: str, max_pages: int = 10, headless: bool = True):
+def crawl_rocketreach_web_task(
+    self,
+    base_url: str,
+    *,
+    start_page: int = 1,
+    num_pages: int = 1,
+    page_size: int = 20,
+    timeout_sec: int = 60,
+    headless: bool = True,
+):
     """
     Celery task to crawl RocketReach web interface with pagination
     
@@ -342,7 +351,10 @@ def crawl_rocketreach_web_task(self, base_url: str, max_pages: int = 10, headles
         result = run_rocketreach_web_crawl(
             base_url=base_url,
             headless=headless,
-            max_pages=max_pages
+            max_pages=num_pages,
+            page_size=page_size,
+            nav_timeout_sec=timeout_sec,
+            start_page=start_page,
         )
         
         if result['success']:

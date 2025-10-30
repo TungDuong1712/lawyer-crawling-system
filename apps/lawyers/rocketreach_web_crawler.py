@@ -815,33 +815,63 @@ class RocketReachWebCrawler:
                 logger.warning(f'Detected company results URL: {base_url}')
                 logger.warning('Attempting to click "Search Employees"...')
                 
-                # Load the company results page as provided (respect start/pageSize from URL/CLI)
-                await self.page.goto(base_url)
+                # Enforce start/pageSize for COMPANY listing based on CLI args
+                try:
+                    from urllib.parse import urlparse as _urlparse, parse_qs as _parse_qs, urlencode as _urlencode
+                    _p = _urlparse(base_url)
+                    _q = _parse_qs(_p.query)
+                    # Compute company list start as 1-based index
+                    company_start = max(1, (int(getattr(self, 'base_start', 1)) - 1) * int(getattr(self, 'page_size', 20)) + 1)
+                    _q['start'] = [str(company_start)]
+                    _q['pageSize'] = [str(int(getattr(self, 'page_size', 20)))]
+                    _company_query = _urlencode(_q, doseq=True)
+                    company_url = f"{_p.scheme}://{_p.netloc}{_p.path}?{_company_query}" if _company_query else f"{_p.scheme}://{_p.netloc}{_p.path}"
+                    logger.warning(f"Company listing URL rewritten to: {company_url}")
+                    self.company_listing_url = company_url
+                except Exception:
+                    company_url = base_url
+                    logger.warning("Failed to rewrite company URL; using provided URL")
+                    self.company_listing_url = company_url
+
+                await self.page.goto(company_url)
                 await self.page.wait_for_load_state('networkidle')
                 # Snapshot company page to verify real HTML/DOM
                 await self._snapshot('company_page', include_html=True)
                 
                 # Try to find and iterate all "Search Employees" buttons on the current company page
                 try:
-                    await self.page.wait_for_selector('button[data-px-single-search-employees="true"]', timeout=30000)
+                    # Build a unique list of company cards and their primary button (avoid duplicates per card)
+                    await self.page.wait_for_selector('[data-test-id="company_card_container"]', timeout=30000)
                     total_contacts_company_page = 0
-                    buttons_count = len(await self.page.query_selector_all('button[data-px-single-search-employees="true"]'))
-                    logger.warning(f'Company page: found {buttons_count} "Search Employees" buttons')
+                    company_cards = await self.page.query_selector_all('[data-test-id="company_card_container"]')
+                    # Map each card to its first visible/enabled button
+                    card_buttons = []
+                    for card in company_cards:
+                        btn = await card.query_selector('button[data-px-single-search-employees="true"]')
+                        if btn:
+                            card_buttons.append(btn)
+                    buttons_count = len(card_buttons)
+                    logger.warning(f'Company page: found {buttons_count} companies')
 
                     # Iterate each company on the current page
                     company_index = 0
                     processed_companies = set()  # Track processed company IDs
                     while company_index < buttons_count:
-                        # Refetch buttons each loop (DOM may change after back navigation)
-                        buttons = await self.page.query_selector_all('button[data-px-single-search-employees="true"]')
-                        if company_index >= len(buttons):
-                            logger.warning(f'Company index {company_index} exceeds available buttons {len(buttons)}, stopping')
+                        # Refetch per-card buttons each loop (DOM may change after back navigation)
+                        company_cards = await self.page.query_selector_all('[data-test-id="company_card_container"]')
+                        card_buttons = []
+                        for card in company_cards:
+                            btn_tmp = await card.query_selector('button[data-px-single-search-employees="true"]')
+                            if btn_tmp:
+                                card_buttons.append(btn_tmp)
+                        if company_index >= len(card_buttons):
+                            logger.warning(f'Company index {company_index} exceeds available companies {len(card_buttons)}, stopping')
                             break
                         
                         # Skip if button is not clickable
-                        btn = buttons[company_index]
+                        btn = card_buttons[company_index]
                         if not (await btn.is_visible()) or not (await btn.is_enabled()):
-                            logger.warning(f'Button {company_index+1} not clickable, skipping to next')
+                            logger.warning(f'Company {company_index+1}: button not clickable, skipping to next')
                             company_index += 1
                             continue
 
@@ -928,11 +958,8 @@ class RocketReachWebCrawler:
                             # Try to manually construct the URL with company ID
                             if company_id:
                                 manual_url = f"https://rocketreach.co/person?employer%5B%5D=%22{company_id}%3A{info.get('name', 'Unknown').replace(' ', '+')}%22&start=1&pageSize=100"
-                                logger.warning(f'Attempting manual navigation to: {manual_url}')
                                 await self.page.goto(manual_url)
                                 await self.page.wait_for_load_state('domcontentloaded')
-                                current_url = self.page.url
-                                logger.warning(f'Manual URL result: {current_url}')
                         
                         # Skip snapshot for performance
 
@@ -949,7 +976,7 @@ class RocketReachWebCrawler:
                             # Keep all other parameters (especially employer[] for company-specific search)
                             new_query = urlencode(q, doseq=True)
                             employees_url = f"{p.scheme}://{p.netloc}{p.path}?{new_query}"
-                            logger.warning(f'Switched to employees URL (single page): {employees_url}')
+                            logger.warning(f'Switched to employees URL: {employees_url}')
                             await self.page.goto(employees_url)
                             await self.page.wait_for_load_state('domcontentloaded')  # Faster than networkidle
                             try:
@@ -977,7 +1004,9 @@ class RocketReachWebCrawler:
                             # Use longer timeout and retry logic
                             for retry in range(3):
                                 try:
-                                    await self.page.goto(base_url, timeout=90000)  # 90s timeout
+                                    # Always return to the enforced company listing URL if available
+                                    target_company_url = getattr(self, 'company_listing_url', base_url)
+                                    await self.page.goto(target_company_url, timeout=90000)  # 90s timeout
                                     await self.page.wait_for_load_state('domcontentloaded', timeout=30000)
                                     
                                     # Wait for buttons to be available again
@@ -992,12 +1021,12 @@ class RocketReachWebCrawler:
                             # Skip snapshot for performance
                             logger.warning(f'Returned to company page for next company (current: {company_index+1}/{buttons_count})')
                             
-                            # Debug: check if buttons are still available
-                            current_buttons = await self.page.query_selector_all('button[data-px-single-search-employees="true"]')
-                            logger.warning(f'After return: found {len(current_buttons)} buttons (was {buttons_count})')
+                            # Debug: check if company cards are still available
+                            current_cards = await self.page.query_selector_all('[data-test-id="company_card_container"]')
+                            logger.warning(f'After return: found {len(current_cards)} companies (was {buttons_count})')
                             
                             # Update buttons_count in case it changed
-                            buttons_count = len(current_buttons)
+                            buttons_count = len(current_cards)
                         except Exception as e:
                             logger.warning(f'Failed to go back to company page after retries: {e}')
                             break
@@ -1012,7 +1041,12 @@ class RocketReachWebCrawler:
                 except Exception as e:
                     logger.warning(f'Could not pivot from company page to employees: {e}')
             else:
-                logger.info(f"URL is not a company page, proceeding with normal crawl")
+                logger.warning("=== PERSON CRAWL DETECTED ===")
+                try:
+                    # Snapshot first person page for debugging visibility
+                    await self._snapshot('person_page_initial', include_html=True)
+                except Exception:
+                    pass
         except Exception as e:
             logger.debug(f'Company URL detection failed (non-blocking): {e}')
         
@@ -1020,7 +1054,7 @@ class RocketReachWebCrawler:
             try:
                 # Build URL with pagination
                 page_url = self._build_page_url(base_url, current_page)
-                logger.info(f"Crawling page {current_page}: {page_url}")
+                logger.warning(f"Crawling person page {current_page}: {page_url}")
                 
                 # Navigate to page
                 await self.page.goto(page_url)
@@ -1043,6 +1077,7 @@ class RocketReachWebCrawler:
                         if stable_iterations >= 4:  # ~2s stable
                             break
                         await self.page.wait_for_timeout(500)
+                    logger.warning(f"Person page {current_page}: detected {last_count} profile cards")
                 except:
                     logger.warning(f'No search results found on page {current_page}')
                     break
@@ -1051,7 +1086,7 @@ class RocketReachWebCrawler:
                 page_contacts = await self._extract_contacts_from_page(current_page)
                 all_contacts.extend(page_contacts)
                 
-                logger.info(f"Found {len(page_contacts)} contacts on page {current_page}")
+                logger.warning(f"Extracted {len(page_contacts)} contacts on person page {current_page}")
                 
                 # Check if there's a next page
                 if not await self._has_next_page():
@@ -1115,36 +1150,96 @@ class RocketReachWebCrawler:
     async def _extract_contacts_from_page(self, page_number: int) -> List[Dict]:
         """Extract contact information from current page - click Get Contact Info buttons first"""
         contacts = []
-        
+
         try:
             # Find all profile cards first
             profile_cards = await self.page.query_selector_all('[data-profile-card-id]')
             logger.info(f"Found {len(profile_cards)} profile cards on page {page_number}")
-            
+
+            # 1) Phase 1: click all Get Contact Info buttons (only for cards that need lookup)
             for i, card in enumerate(profile_cards):
                 try:
-                    # Wait for contact info to potentially load (don't skip too early)
+                    # Bring into view to trigger lazy content
                     try:
-                        await card.wait_for_selector('[data-onboarding-id="main-contact-info-lookup-complete"], a[href*="mailto:"]', timeout=3000)
+                        await card.scroll_into_view_if_needed()
+                        await self.page.wait_for_timeout(150)
                     except Exception:
-                        # best-effort wait
-                        await self.page.wait_for_timeout(500)
+                        pass
 
-                    # Click "Get Contact Info" button for this card (if present)
-                    await self._click_get_contact_info(card, i + 1)
-                    
-                    # Wait a bit for email to load (reduced)
-                    await self.page.wait_for_timeout(1000)
-                    
-                    # Extract contact info after clicking
+                    # Skip click if email already visible or lookup already completed
+                    already_has_mail = await card.query_selector('a[href^="mailto:"]')
+                    already_completed = await card.query_selector('[data-onboarding-id="main-contact-info-lookup-complete"], [data-onboarding-id="main-contact-info-lookup-complete-no-info-found"]')
+                    if not (already_has_mail or already_completed):
+                        try:
+                            pid = await card.get_attribute('data-profile-card-id') or f'unknown_{i+1}'
+                            name_el = await card.query_selector('#profile-name')
+                            name_txt = (await name_el.inner_text()).strip() if name_el else 'N/A'
+                            logger.warning(f"[Lookup start] Card {i+1} (profile {pid} - {name_txt})")
+                        except Exception:
+                            pass
+                        await self._click_get_contact_info(card, i + 1)
+                        # small gap between clicks to avoid server throttling
+                        await self.page.wait_for_timeout(150)
+                    else:
+                        try:
+                            pid = await card.get_attribute('data-profile-card-id') or f'unknown_{i+1}'
+                            name_el = await card.query_selector('#profile-name')
+                            name_txt = (await name_el.inner_text()).strip() if name_el else 'N/A'
+                            status = 'email-visible' if already_has_mail else 'already-completed'
+                            logger.warning(f"[Lookup skip] Card {i+1} (profile {pid} - {name_txt}) - {status}")
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.debug(f"Phase1 click failed on card {i+1}: {e}")
+
+            # 2) Phase 2: wait collectively until all cards are either completed or show email, up to ~45s
+            attempts = 0
+            while attempts < 90:  # 90 * 500ms ~= 45s
+                attempts += 1
+                try:
+                    # Fast path: if page no longer has any in-progress markers, we are done
+                    in_progress_elems = await self.page.query_selector_all('[data-onboarding-id="main-contact-info-lookup-in-progress"], button[data-px-single-lookup][processing="true"], button:has-text("Looking Up...")')
+                    if not in_progress_elems:
+                        break
+                except Exception:
+                    pass
+                await self.page.wait_for_timeout(500)
+                # Mid-wait: gently scroll to retrigger lazy rendering
+                if attempts % 10 == 0:
+                    try:
+                        await self.page.mouse.wheel(0, 400)
+                        await self.page.wait_for_timeout(200)
+                    except Exception:
+                        pass
+
+            # 3) Phase 3: after wait, log per-card status then extract all cards
+            for i, card in enumerate(profile_cards):
+                try:
+                    # Log status per card
+                    try:
+                        pid = await card.get_attribute('data-profile-card-id') or f'unknown_{i+1}'
+                        name_el = await card.query_selector('#profile-name')
+                        name_txt = (await name_el.inner_text()).strip() if name_el else 'N/A'
+                        has_mail = await card.query_selector('a[href^="mailto:"]')
+                        completed = await card.query_selector('[data-onboarding-id="main-contact-info-lookup-complete"]')
+                        noinfo = await card.query_selector('[data-onboarding-id="main-contact-info-lookup-complete-no-info-found"]')
+                        if has_mail:
+                            logger.warning(f"[Lookup done] Card {i+1} (profile {pid} - {name_txt}) - email ready")
+                        elif completed:
+                            logger.warning(f"[Lookup done] Card {i+1} (profile {pid} - {name_txt}) - completed (no mailto?)")
+                        elif noinfo:
+                            logger.warning(f"[Lookup done] Card {i+1} (profile {pid} - {name_txt}) - no info found")
+                        else:
+                            logger.warning(f"[Lookup timeout] Card {i+1} (profile {pid} - {name_txt}) - still pending")
+                    except Exception:
+                        pass
+
                     contact_info = await self._extract_single_contact_after_click(card, page_number, i + 1)
                     if contact_info:
                         contacts.append(contact_info)
                         logger.info(f"Extracted contact {i+1}: {contact_info.get('name', 'N/A')} - {contact_info.get('email', 'N/A')}")
-                    
                 except Exception as e:
                     logger.warning(f"Error extracting contact {i+1} on page {page_number}: {e}")
-                    # Save card HTML snapshot for debugging this failure
                     try:
                         pid = await card.get_attribute('data-profile-card-id') or f'unknown_{i+1}'
                         html = await card.inner_html()
@@ -1155,10 +1250,10 @@ class RocketReachWebCrawler:
                     except Exception:
                         pass
                     continue
-            
+
         except Exception as e:
             logger.error(f"Error extracting contacts from page {page_number}: {e}")
-        
+
         return contacts
     
     async def _click_get_contact_info(self, card, position: int):
@@ -1350,12 +1445,40 @@ class RocketReachWebCrawler:
                 if phone_elem:
                     phone = phone_elem.get_text(strip=True)
             
+            # Fallback: if no email found in the expected sections, search the whole document for any mailto
+            if primary_email == "N/A" and secondary_email == "N/A":
+                try:
+                    any_mailto = soup.select('a[href^="mailto:"]')
+                    if any_mailto:
+                        primary_email = any_mailto[0].get('href', '').replace('mailto:', '') or "N/A"
+                except Exception:
+                    pass
+            # Regex fallback for visible email text (non-anchor)
+            if primary_email == "N/A" and secondary_email == "N/A":
+                try:
+                    import re as _re
+                    text = soup.get_text(" ", strip=True)
+                    m = _re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
+                    if m:
+                        primary_email = m.group(0)
+                except Exception:
+                    pass
+
             # Determine best email to use
             best_email = primary_email if primary_email != "N/A" else secondary_email
             
-            # Skip if no email
+            # Skip if no email (also dump card HTML for debugging)
             if best_email == "N/A":
                 logger.warning(f"No email found for contact {name} at position {position}")
+                try:
+                    pid_dbg = await card.get_attribute('data-profile-card-id') or f'unknown_{position}'
+                    html_dbg = await card.inner_html()
+                    path_dbg = f"rocketreach_card_noemail_{pid_dbg}.html"
+                    with open(path_dbg, 'w', encoding='utf-8') as f_dbg:
+                        f_dbg.write(html_dbg)
+                    logger.info(f"Saved no-email card HTML: {path_dbg}")
+                except Exception:
+                    pass
                 return None
             
             return {
@@ -1495,6 +1618,25 @@ class RocketReachWebCrawler:
                 if phone_elem:
                     phone = phone_elem.get_text(strip=True)
             
+            # Fallback: if no email found in the expected sections, search the whole card for any mailto
+            if primary_email == "N/A" and secondary_email == "N/A":
+                try:
+                    any_mailto = card.select('a[href^="mailto:"]')
+                    if any_mailto:
+                        primary_email = any_mailto[0].get('href', '').replace('mailto:', '') or "N/A"
+                except Exception:
+                    pass
+            # Regex fallback for visible email text (non-anchor)
+            if primary_email == "N/A" and secondary_email == "N/A":
+                try:
+                    import re as _re
+                    text = card.get_text(" ", strip=True)
+                    m = _re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
+                    if m:
+                        primary_email = m.group(0)
+                except Exception:
+                    pass
+
             # Determine best email to use
             best_email = primary_email if primary_email != "N/A" else secondary_email
             

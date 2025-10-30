@@ -24,8 +24,8 @@ class Command(BaseCommand):
         # Subcommands
         subparsers = parser.add_subparsers(dest='method', help='Crawling method')
         
-        # Web crawling với pagination
-        web_parser = subparsers.add_parser('crawl', help='Crawl RocketReach với pagination')
+        # Web crawling with pagination
+        web_parser = subparsers.add_parser('crawl', help='Crawl RocketReach with pagination')
         web_parser.add_argument('--url', type=str, required=True, help='RocketReach search URL')
         web_parser.add_argument('--start-page', type=int, default=1, help='Starting page (default: 1)')
         web_parser.add_argument('--num-pages', type=int, default=3, help='Number of pages (default: 3)')
@@ -35,7 +35,7 @@ class Command(BaseCommand):
         web_parser.add_argument('--debug-analyze-snapshots', action='store_true', help='After crawl, analyze saved snapshots (emails/cards) and print summary')
         
         # Keyword search
-        search_parser = subparsers.add_parser('search', help='Search by keyword và get contact info')
+        search_parser = subparsers.add_parser('search', help='Search by keyword and get contact info')
         search_parser.add_argument('--keyword', type=str, required=True, help='Search keyword')
         search_parser.add_argument('--headless', action='store_true', help='Run in headless mode')
         
