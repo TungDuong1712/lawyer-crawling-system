@@ -312,9 +312,9 @@ Run web crawl against RocketReach with pagination and page-size control.
 
 ```bash
 # Basic crawl (headless)
-docker compose exec web python manage.py rocketreach_web crawl \
-  --url "https://rocketreach.co/company?geo%5B%5D=US+>+States&domain=law&start=1&pageSize=10" \
-  --start-page 1 --num-pages 1 --page-size 10 --timeout 60 --headless
+docker compose exec joel-web python manage.py rocketreach_web crawl \
+  --url "https://rocketreach.co/person?geo%5B%5D=US+%3E+States&company_industry%5B%5D=Law+Firms+%26+Legal+Services" \
+  --start-page 1 --num-pages 1 --page-size 100 --timeout 120 --headless
 
 # Crawl a later page and only 1 page, overriding page size
 docker compose exec web python manage.py rocketreach_web crawl \

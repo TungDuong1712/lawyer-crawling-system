@@ -17,6 +17,24 @@ from .models import RocketReachContact
 
 logger = logging.getLogger(__name__)
 
+# Ensure logs from this module include timestamps
+if not getattr(logger, "_time_configured", False):
+    try:
+        logger.propagate = False  # avoid duplicate logs from root handlers
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            fmt='%(asctime)s %(levelname)s [%(name)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        handler.setFormatter(formatter)
+        logger.handlers = [handler]
+        if not logger.level or logger.level == logging.NOTSET:
+            logger.setLevel(logging.INFO)
+        logger._time_configured = True
+    except Exception:
+        # Fallback silently if logging is managed elsewhere
+        pass
+
 
 class RocketReachWebCrawler:
     """Web crawler for RocketReach using Playwright - tất cả logic Playwright"""
@@ -1192,23 +1210,38 @@ class RocketReachWebCrawler:
                 except Exception as e:
                     logger.debug(f"Phase1 click failed on card {i+1}: {e}")
 
-            # 2) Phase 2: wait collectively until all cards are either completed or show email, up to ~45s
+            # 2) Phase 2: wait until EACH card resolves to one of states: has mailto OR lookup-complete OR no-info
+            # Give up to ~60s (120 * 500ms)
+            resolved = [False] * len(profile_cards)
             attempts = 0
-            while attempts < 90:  # 90 * 500ms ~= 45s
+            while attempts < 120 and not all(resolved):
                 attempts += 1
-                try:
-                    # Fast path: if page no longer has any in-progress markers, we are done
-                    in_progress_elems = await self.page.query_selector_all('[data-onboarding-id="main-contact-info-lookup-in-progress"], button[data-px-single-lookup][processing="true"], button:has-text("Looking Up...")')
-                    if not in_progress_elems:
-                        break
-                except Exception:
-                    pass
-                await self.page.wait_for_timeout(500)
-                # Mid-wait: gently scroll to retrigger lazy rendering
-                if attempts % 10 == 0:
+                for idx, card in enumerate(profile_cards):
+                    if resolved[idx]:
+                        continue
                     try:
-                        await self.page.mouse.wheel(0, 400)
-                        await self.page.wait_for_timeout(200)
+                        # Scroll unresolved cards to trigger rendering
+                        try:
+                            await card.scroll_into_view_if_needed()
+                        except Exception:
+                            pass
+                        has_mail = await card.query_selector('a[href^="mailto:"]')
+                        completed = await card.query_selector('[data-onboarding-id="main-contact-info-lookup-complete"]')
+                        noinfo = await card.query_selector('[data-onboarding-id="main-contact-info-lookup-complete-no-info-found"]')
+                        looking = await card.query_selector('[data-onboarding-id="main-contact-info-lookup-in-progress"]')
+                        if has_mail or completed or noinfo:
+                            resolved[idx] = True
+                        else:
+                            # Nudge: small pause lets incremental DOM render
+                            pass
+                    except Exception:
+                        # If the card errors, do not block others; keep waiting overall
+                        pass
+                # Gentle pacing and occasional page scroll to trigger lazy loads
+                await self.page.wait_for_timeout(500)
+                if attempts % 12 == 0:
+                    try:
+                        await self.page.mouse.wheel(0, 600)
                     except Exception:
                         pass
 
@@ -1234,10 +1267,35 @@ class RocketReachWebCrawler:
                     except Exception:
                         pass
 
+                    # If still pending, try a short targeted wait for this card (up to ~10s)
+                    pending = await card.query_selector('[data-onboarding-id="main-contact-info-lookup-in-progress"]')
+                    if pending:
+                        for _ in range(20):  # 20 * 500ms = 10s
+                            try:
+                                has_mail = await card.query_selector('a[href^="mailto:"]')
+                                completed = await card.query_selector('[data-onboarding-id="main-contact-info-lookup-complete"]')
+                                noinfo = await card.query_selector('[data-onboarding-id="main-contact-info-lookup-complete-no-info-found"]')
+                                if has_mail or completed or noinfo:
+                                    break
+                            except Exception:
+                                pass
+                            await self.page.wait_for_timeout(500)
+
                     contact_info = await self._extract_single_contact_after_click(card, page_number, i + 1)
                     if contact_info:
                         contacts.append(contact_info)
                         logger.info(f"Extracted contact {i+1}: {contact_info.get('name', 'N/A')} - {contact_info.get('email', 'N/A')}")
+                    else:
+                        # If unresolved, save card HTML for diagnostics
+                        try:
+                            pid_dbg = await card.get_attribute('data-profile-card-id') or f'unknown_{i+1}'
+                            html_dbg = await card.inner_html()
+                            path_dbg = f"rocketreach_card_wait_timeout_{pid_dbg}.html"
+                            with open(path_dbg, 'w', encoding='utf-8') as f_dbg:
+                                f_dbg.write(html_dbg)
+                            logger.info(f"Saved pending card HTML: {path_dbg}")
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.warning(f"Error extracting contact {i+1} on page {page_number}: {e}")
                     try:

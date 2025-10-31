@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.playwright
-    image: danielng01/crawl_lawyer:0.0.1
+    image: danielng01/crawl_lawyer:0.0.2
     ports:
       - "8001:8001"
     command: python manage.py runserver 0.0.0.0:8001
